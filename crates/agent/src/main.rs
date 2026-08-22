@@ -1,6 +1,8 @@
 mod collectors;
+use crate::collectors::cpu;
 use crate::collectors::memory;
 
 fn main() {
-    println!("{:?}", memory::collect());
+    println!("Memory: {:?}", memory::collect());
+    println!("Cpu: {:?}", cpu::collect());
 }
