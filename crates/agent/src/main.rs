@@ -1,3 +1,6 @@
+mod collectors;
+use crate::collectors::memory;
+
 fn main() {
-    println!("Hello, world!");
+    println!("{:?}", memory::collect());
 }
