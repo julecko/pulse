@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use pulse_config::LogConfig;
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -9,6 +11,8 @@ pub struct Config {
     pub server: String,
     /// How often to collect and send a report.
     pub interval_secs: u64,
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 impl Default for Config {
@@ -16,6 +20,7 @@ impl Default for Config {
         Self {
             server: "127.0.0.1:9000".to_string(),
             interval_secs: 5,
+            log: LogConfig::default(),
         }
     }
 }

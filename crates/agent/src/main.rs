@@ -5,31 +5,40 @@ mod transport;
 
 use std::thread;
 
+use tracing::{error, info};
+
 fn main() {
     let loaded = pulse_config::load::<config::Config>("agent").unwrap_or_else(|err| {
         eprintln!("{err}");
         std::process::exit(1);
     });
-    if loaded.found {
-        println!("config: loaded {}", loaded.path.display());
-    } else {
-        println!("config: none at {}, using defaults", loaded.path.display());
-    }
     let cfg = loaded.config;
-    println!(
-        "pulse agent: reporting to {} every {}s",
-        cfg.server, cfg.interval_secs
+
+    let _log_guard = pulse_config::log::init("agent", &cfg.log).unwrap_or_else(|err| {
+        eprintln!("logging setup failed: {err}");
+        std::process::exit(1);
+    });
+
+    if loaded.found {
+        info!(path = %loaded.path.display(), "loaded config");
+    } else {
+        info!(path = %loaded.path.display(), "no config file, using defaults");
+    }
+    info!(
+        server = %cfg.server,
+        interval_secs = cfg.interval_secs,
+        "pulse agent starting"
     );
 
     loop {
         let report = collectors::collect();
         match transport::send(&cfg.server, &report) {
-            Ok(()) => println!(
-                "sent report: {} metric section(s), host {}",
-                report.metrics.section_count(),
-                report.host.hostname,
+            Ok(()) => info!(
+                sections = report.metrics.section_count(),
+                host = %report.host.hostname,
+                "report sent"
             ),
-            Err(err) => eprintln!("failed to send report to {}: {err}", cfg.server),
+            Err(err) => error!(server = %cfg.server, %err, "failed to send report"),
         }
         thread::sleep(cfg.interval());
     }

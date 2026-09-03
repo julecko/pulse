@@ -28,7 +28,7 @@ pub fn collect() -> Report {
 
     for collector in registry().iter_mut() {
         if let Err(err) = collector.collect_into(&mut ctx, &mut metrics) {
-            eprintln!("collector `{}` failed: {err}", collector.name());
+            tracing::warn!(collector = collector.name(), %err, "collector failed");
         }
     }
 

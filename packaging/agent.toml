@@ -6,3 +6,10 @@ server = "127.0.0.1:9000"
 
 # How often to collect and send a report, in seconds.
 interval_secs = 5
+
+[log]
+# error | warn | info | debug | trace  (RUST_LOG overrides this when set)
+level = "info"
+# Explicit log file. If unset: stdout in debug, /var/log/pulse/agent.log in release.
+# file = "/var/log/pulse/agent.log"
+ansi = false

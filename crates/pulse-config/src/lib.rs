@@ -9,9 +9,13 @@
 //! Either way, `PULSE_<APP>_CONFIG` (e.g. `PULSE_SERVER_CONFIG`) overrides the
 //! full path.
 
+pub mod log;
+
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
+
+pub use log::LogConfig;
 
 /// Standard release location for config files.
 pub const SYSTEM_DIR: &str = "/etc/pulse";

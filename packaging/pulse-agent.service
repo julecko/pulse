@@ -12,6 +12,8 @@ ConfigurationDirectory=pulse
 # machine id is persisted here when /etc/machine-id is unavailable
 StateDirectory=pulse
 Environment=XDG_STATE_HOME=/var/lib
+# Release default log target: /var/log/pulse/agent.log
+LogsDirectory=pulse
 ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes

@@ -6,6 +6,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use tokio::net::TcpListener;
+use tracing::{error, info};
 
 use registry::Registry;
 
@@ -15,15 +16,21 @@ async fn main() -> io::Result<()> {
         eprintln!("{err}");
         std::process::exit(1);
     });
-    if loaded.found {
-        println!("config: loaded {}", loaded.path.display());
-    } else {
-        println!("config: none at {}, using defaults", loaded.path.display());
-    }
     let cfg = loaded.config;
 
+    let _log_guard = pulse_config::log::init("server", &cfg.log).unwrap_or_else(|err| {
+        eprintln!("logging setup failed: {err}");
+        std::process::exit(1);
+    });
+
+    if loaded.found {
+        info!(path = %loaded.path.display(), "loaded config");
+    } else {
+        info!(path = %loaded.path.display(), "no config file, using defaults");
+    }
+
     let listener = TcpListener::bind(&cfg.bind).await?;
-    println!("pulse server listening on {}", cfg.bind);
+    info!(bind = %cfg.bind, "pulse server listening");
 
     let registry = Arc::new(Mutex::new(Registry::default()));
 
@@ -33,11 +40,11 @@ async fn main() -> io::Result<()> {
                 let registry = Arc::clone(&registry);
                 tokio::spawn(async move {
                     if let Err(err) = connection::handle(stream, peer, registry).await {
-                        eprintln!("connection error ({peer}): {err}");
+                        error!(%peer, %err, "connection error");
                     }
                 });
             }
-            Err(err) => eprintln!("accept failed: {err}"),
+            Err(err) => error!(%err, "accept failed"),
         }
     }
 }

@@ -5,9 +5,11 @@ use std::sync::{Arc, Mutex};
 use protocol::{ProtocolError, Report};
 use tokio::io::BufReader;
 use tokio::net::TcpStream;
+use tracing::{info, warn};
 
 use crate::registry::{Registry, Verdict};
 
+#[tracing::instrument(skip_all, fields(peer = %peer))]
 pub async fn handle(
     stream: TcpStream,
     peer: SocketAddr,
@@ -21,57 +23,64 @@ pub async fn handle(
         seq += 1;
         machine_id = report.host.machine_id.clone();
 
-        let (total, notes) = register(&registry, &report, peer);
-        for line in notes {
-            println!("{line}");
-        }
-        print!("{}", render(&peer, seq, total, &report));
+        let total = register(&registry, &report, peer);
+        info!(
+            "report #{seq} from {}\n{}",
+            report.host.hostname,
+            render(&peer, seq, total, &report)
+        );
     }
 
     if seq == 0 {
-        println!("· {peer} connected but sent no reports");
+        warn!("peer connected but sent no reports");
     } else {
-        println!("· {peer} ({machine_id}) disconnected after {seq} report(s)");
+        info!(machine_id = %machine_id, reports = seq, "peer disconnected");
     }
     Ok(())
 }
 
-fn register(registry: &Mutex<Registry>, report: &Report, peer: SocketAddr) -> (u64, Vec<String>) {
+/// Fold the report into the registry, emitting an event for anything notable.
+/// Returns the machine's running report count.
+fn register(registry: &Mutex<Registry>, report: &Report, peer: SocketAddr) -> u64 {
     let host = &report.host;
     let mut reg = registry.lock().unwrap();
-    let mut lines = Vec::new();
 
     let seen = reg.record(&host.machine_id, &host.hostname, peer.ip());
     match seen.verdict {
-        Verdict::New => lines.push(format!(
-            "✚ new host: {} ({})",
-            host.hostname, host.machine_id
-        )),
+        Verdict::New => info!(
+            machine_id = %host.machine_id,
+            hostname = %host.hostname,
+            "new host registered"
+        ),
         Verdict::Known => {}
-        Verdict::Renamed { previous } => lines.push(format!(
-            "~ host {} renamed {previous} → {}",
-            host.machine_id, host.hostname
-        )),
+        Verdict::Renamed { previous } => info!(
+            machine_id = %host.machine_id,
+            from = %previous,
+            to = %host.hostname,
+            "host renamed"
+        ),
     }
 
     if let Some(old) = seen.peer_changed_from {
-        lines.push(format!(
-            "~ host {} moved: peer {old} → {}",
-            host.machine_id,
-            peer.ip()
-        ));
+        info!(
+            machine_id = %host.machine_id,
+            from = %old,
+            to = %peer.ip(),
+            "host changed address"
+        );
     }
 
     let clashes = reg.others_named(&host.hostname, &host.machine_id);
     if !clashes.is_empty() {
-        lines.push(format!(
-            "! hostname `{}` also used by: {}",
-            host.hostname,
-            clashes.join(", ")
-        ));
+        warn!(
+            hostname = %host.hostname,
+            machine_id = %host.machine_id,
+            others = %clashes.join(", "),
+            "hostname claimed by multiple machines"
+        );
     }
 
-    (seen.reports, lines)
+    seen.reports
 }
 
 /// Format one report as an indented, human-readable block.

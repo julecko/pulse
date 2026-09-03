@@ -3,3 +3,10 @@
 
 # Address the TCP listener binds to.
 bind = "0.0.0.0:9000"
+
+[log]
+# error | warn | info | debug | trace  (RUST_LOG overrides this when set)
+level = "info"
+# Explicit log file. If unset: stdout in debug, /var/log/pulse/server.log in release.
+# file = "/var/log/pulse/server.log"
+ansi = false

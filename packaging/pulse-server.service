@@ -9,6 +9,8 @@ Restart=on-failure
 DynamicUser=yes
 # Config is read from /etc/pulse/server.toml
 ConfigurationDirectory=pulse
+# Release default log target: /var/log/pulse/server.log
+LogsDirectory=pulse
 ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes

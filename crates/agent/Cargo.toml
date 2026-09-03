@@ -8,3 +8,4 @@ protocol = { path = "../protocol" }
 pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
 sysinfo = "0.38.4"
+tracing = "0.1"
