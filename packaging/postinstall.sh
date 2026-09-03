@@ -34,6 +34,12 @@ for bin in pulse-serverd pulse-server pulse-agentd pulse-agent; do
     fi
 done
 
+if ! getent passwd pulse >/dev/null 2>&1; then
+    echo "==> creating system user 'pulse'"
+    useradd --system --user-group --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin --comment "pulse metrics server" pulse
+fi
+
 echo "==> daemons -> $PREFIX/lib/pulse"
 install -Dm755 "$root/target/release/pulse-serverd" "$PREFIX/lib/pulse/pulse-serverd"
 install -Dm755 "$root/target/release/pulse-agentd"  "$PREFIX/lib/pulse/pulse-agentd"
@@ -71,6 +77,10 @@ cat <<'EOF'
 
 Done. Next steps:
   - edit /etc/pulse/server.toml and /etc/pulse/agent.toml
+  - encrypt the link (optional but recommended):
+        pulse-server cert generate --dns <name>
+        # copy /etc/pulse/server.crt to each agent, then on the agent:
+        pulse-agent cert trust /path/to/server.crt
   - start:   systemctl enable --now pulse-agent    (or pulse-server)
   - logs:    journalctl -u pulse-agent -f
              tail -f /var/log/pulse/agent.log

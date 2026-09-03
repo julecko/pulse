@@ -55,10 +55,15 @@ pub fn read_report<R: Read>(r: &mut R) -> Result<Option<Report>, ProtocolError> 
 fn read_exact_or_eof<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<bool> {
     let mut filled = 0;
     while filled < buf.len() {
-        match r.read(&mut buf[filled..])? {
-            0 if filled == 0 => return Ok(false),
-            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-            n => filled += n,
+        match r.read(&mut buf[filled..]) {
+            Ok(0) if filled == 0 => return Ok(false),
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => filled += n,
+            // A TLS peer that hangs up without a close_notify, exactly at a
+            // frame boundary, is a clean disconnect for our purposes.
+            Err(e) if filled == 0 && e.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
         }
     }
     Ok(true)
@@ -100,10 +105,14 @@ where
     use tokio::io::AsyncReadExt;
     let mut filled = 0;
     while filled < buf.len() {
-        match r.read(&mut buf[filled..]).await? {
-            0 if filled == 0 => return Ok(false),
-            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-            n => filled += n,
+        match r.read(&mut buf[filled..]).await {
+            Ok(0) if filled == 0 => return Ok(false),
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => filled += n,
+            // A TLS peer that hangs up without a close_notify, exactly at a
+            // frame boundary, is a clean disconnect for our purposes.
+            Err(e) if filled == 0 && e.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
+            Err(e) => return Err(e),
         }
     }
     Ok(true)

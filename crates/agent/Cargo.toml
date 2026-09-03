@@ -17,6 +17,7 @@ protocol = { path = "../protocol" }
 pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
 sysinfo = "0.38.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tracing = "0.1"
 
 [package.metadata.deb]
@@ -38,7 +39,6 @@ assets = [
     ["../../packaging/README.md", "usr/share/doc/pulse-agent/README.md", "644"],
 ]
 conf-files = ["/etc/pulse/agent.toml"]
-# maintainer-scripts must be set (even to a dir with no scripts) for cargo-deb
-# to generate the systemd postinst/prerm/postrm from systemd-units below.
-maintainer-scripts = "../../packaging"
+# empty dir — presence still makes cargo-deb generate the systemd postinst/etc.
+maintainer-scripts = "../../packaging/deb/agent"
 systemd-units = { unit-name = "pulse-agent", unit-scripts = "../../packaging", enable = false, start = false }

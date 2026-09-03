@@ -4,6 +4,13 @@
 # Address the TCP listener binds to.
 bind = "0.0.0.0:9000"
 
+# Encryption. Run `pulse-server cert generate` to create these and fill in the
+# [tls] section below; without it the link is plaintext. Once set, the listener
+# only accepts TLS 1.3.
+# [tls]
+# cert = "/etc/pulse/server.crt"
+# key  = "/etc/pulse/server.key"
+
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)
 level = "info"

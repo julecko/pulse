@@ -5,5 +5,9 @@ fn main() -> ExitCode {
         name: "agent",
         unit: "pulse-agent",
         daemon: "/usr/lib/pulse/pulse-agentd",
+        tls: pulse_cli::Tls::Agent {
+            cert: "trusted-server.crt",
+        },
+        service_user: None,
     })
 }

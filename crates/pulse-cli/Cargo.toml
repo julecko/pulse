@@ -12,3 +12,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
 toml_edit = "0.22"
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }

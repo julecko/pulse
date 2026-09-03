@@ -4,18 +4,20 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use protocol::{ProtocolError, Report};
-use tokio::io::BufReader;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tracing::{info, warn};
 
 use crate::registry::{Registry, Verdict};
 
 #[tracing::instrument(skip_all, fields(peer = %peer))]
-pub async fn handle(
-    stream: TcpStream,
+pub async fn handle<S>(
+    stream: S,
     peer: SocketAddr,
     registry: Arc<Mutex<Registry>>,
-) -> Result<(), ProtocolError> {
+) -> Result<(), ProtocolError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut reader = BufReader::new(stream);
 
     let mut seq = 0usize;

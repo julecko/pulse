@@ -6,11 +6,15 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/lib/pulse/pulse-serverd
 Restart=on-failure
-DynamicUser=yes
-# Config is read from /etc/pulse/server.toml
+# Static user (not DynamicUser) so `pulse-server cert generate` can chown the
+# TLS private key to an account the daemon can read. Created by the deb postinst.
+User=pulse
+Group=pulse
+# Config + TLS cert/key read from /etc/pulse/
 ConfigurationDirectory=pulse
 # Release default log target: /var/log/pulse/server.log
 LogsDirectory=pulse
+StateDirectory=pulse
 ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes

@@ -3,16 +3,30 @@
 //! `server-cli` and `agent-cli` are thin `main`s over [`run`], differing only
 //! by the [`App`] descriptor and the config type `C`.
 
+mod cert;
+
 use std::ffi::OsString;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+/// Where a role keeps its TLS files, relative to the config directory.
+#[derive(Clone, Copy)]
+pub enum Tls {
+    /// Server: holds the certificate and its private key.
+    Server {
+        cert: &'static str,
+        key: &'static str,
+    },
+    /// Agent: pins the server's certificate.
+    Agent { cert: &'static str },
+}
 
 /// Per-daemon descriptor supplied by each front-end binary.
 #[derive(Clone, Copy)]
@@ -23,6 +37,20 @@ pub struct App {
     pub unit: &'static str,
     /// Installed daemon path, used by `run`.
     pub daemon: &'static str,
+    /// TLS file layout for this role.
+    pub tls: Tls,
+    /// System user the daemon runs as; generated key/cert are chowned to it.
+    pub service_user: Option<&'static str>,
+}
+
+impl App {
+    /// Directory that holds this role's config + TLS files.
+    fn dir(&self) -> PathBuf {
+        pulse_config::path(self.name)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
 }
 
 #[derive(Parser)]
@@ -41,6 +69,11 @@ enum Cmd {
     Config {
         #[command(subcommand)]
         action: ConfigCmd,
+    },
+    /// Manage the TLS certificate for the encrypted agent -> server link.
+    Cert {
+        #[command(subcommand)]
+        action: CertCmd,
     },
     /// `systemctl start` the service.
     Start,
@@ -78,6 +111,31 @@ enum ConfigCmd {
     Set { key: String, value: String },
 }
 
+#[derive(Subcommand)]
+enum CertCmd {
+    /// (server) Generate a self-signed cert + key and point the config at them.
+    Generate {
+        /// Extra DNS name in the certificate (repeatable).
+        #[arg(long, value_name = "NAME")]
+        dns: Vec<String>,
+        /// Extra IP address in the certificate (repeatable).
+        #[arg(long, value_name = "ADDR")]
+        ip: Vec<String>,
+        /// Overwrite an existing cert/key.
+        #[arg(long)]
+        force: bool,
+    },
+    /// (agent) Trust a server certificate: copy it in and pin it.
+    Trust {
+        /// Path to the server's certificate PEM.
+        path: PathBuf,
+    },
+    /// Print the SHA-256 fingerprint of the active certificate.
+    Fingerprint,
+    /// Print the path of the active certificate.
+    Path,
+}
+
 /// Entry point for a front-end binary.
 pub fn run<C>(app: App) -> ExitCode
 where
@@ -97,6 +155,7 @@ where
 
     let result = match cli.cmd {
         Cmd::Config { action } => config_cmd::<C>(app, action),
+        Cmd::Cert { action } => cert::run::<C>(app, action),
         Cmd::Start => systemctl(&["start", app.unit]),
         Cmd::Stop => systemctl(&["stop", app.unit]),
         Cmd::Restart => systemctl(&["restart", app.unit]),
@@ -179,7 +238,11 @@ where
         }
 
         ConfigCmd::Edit => edit_config::<C>(&path),
-        ConfigCmd::Set { key, value } => set_key::<C>(&path, &key, &value),
+        ConfigCmd::Set { key, value } => {
+            apply_sets::<C>(&path, &[(&key, &value)])?;
+            println!("{}: {key} = {value}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -241,7 +304,10 @@ where
     outcome
 }
 
-fn set_key<C>(path: &Path, key: &str, value: &str) -> Result<ExitCode, String>
+/// Apply one or more dotted `key = value` edits to a config file via toml_edit,
+/// validating the final document against `C` before writing. Missing parent
+/// tables are created as `[section]` headers. Preserves comments; does not print.
+fn apply_sets<C>(path: &Path, kvs: &[(&str, &str)]) -> Result<(), String>
 where
     C: Serialize + DeserializeOwned + Default,
 {
@@ -257,21 +323,25 @@ where
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("parsing {}: {e}", path.display()))?;
 
-    let parts: Vec<&str> = key.split('.').collect();
-    let (last, parents) = parts.split_last().expect("key is non-empty");
-    let mut node = doc.as_item_mut();
-    for parent in parents {
-        node = &mut node[parent];
+    for (key, value) in kvs {
+        let parts: Vec<&str> = key.split('.').collect();
+        let (last, parents) = parts.split_last().expect("key is non-empty");
+        let mut table = doc.as_table_mut();
+        for parent in parents {
+            table = table
+                .entry(parent)
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| format!("{key}: `{parent}` is not a table"))?;
+        }
+        table[last] = infer_value(value);
     }
-    node[last] = infer_value(value);
 
     let candidate = doc.to_string();
     toml::from_str::<C>(&candidate)
-        .map_err(|e| format!("`{key} = {value}` would produce an invalid config: {e}"))?;
+        .map_err(|e| format!("edit would produce an invalid config: {e}"))?;
 
-    write_atomic(path, &candidate)?;
-    println!("{}: {key} = {value}", path.display());
-    Ok(ExitCode::SUCCESS)
+    write_atomic(path, &candidate)
 }
 
 /// Best-effort scalar typing for `config set` values.

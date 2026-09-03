@@ -10,6 +10,7 @@
 //! full path.
 
 pub mod log;
+pub mod tls;
 
 use std::path::PathBuf;
 

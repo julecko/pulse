@@ -17,6 +17,7 @@ protocol = { path = "../protocol", features = ["async"] }
 pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = ["rt", "net", "macros", "io-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tracing = "0.1"
 
 [package.metadata.deb]
@@ -38,7 +39,7 @@ assets = [
     ["../../packaging/README.md", "usr/share/doc/pulse-server/README.md", "644"],
 ]
 conf-files = ["/etc/pulse/server.toml"]
-# maintainer-scripts must be set (even to a dir with no scripts) for cargo-deb
-# to generate the systemd postinst/prerm/postrm from systemd-units below.
-maintainer-scripts = "../../packaging"
+# packaging/deb/server/postinst creates the `pulse` user; cargo-deb appends the
+# systemd fragments (from systemd-units below) at the `#DEBHELPER#` marker.
+maintainer-scripts = "../../packaging/deb/server"
 systemd-units = { unit-name = "pulse-server", unit-scripts = "../../packaging", enable = false, start = false }

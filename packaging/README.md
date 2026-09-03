@@ -61,7 +61,43 @@ Override with `PULSE_SERVER_CONFIG` / `PULSE_AGENT_CONFIG` (full path). A missin
 file is fine (defaults + a log line); a malformed file is fatal.
 
 Settings: server `bind`; agent `server`, `interval_secs`; both take a `[log]`
-table (`level`, `file`, `ansi`, `rotation`, `keep_files`).
+table (`level`, `file`, `ansi`, `rotation`, `keep_files`) and an optional
+`[tls]` table (see below).
+
+## TLS / authentication
+
+The agent -> server link is plaintext unless you configure TLS. When configured
+it is TLS 1.3 with **certificate pinning**: the server has a self-signed cert +
+private key, the agent pins that exact cert. An agent with the wrong cert (or
+none) cannot complete the handshake — it is rejected and no data flows.
+
+```sh
+# on the server host
+sudo pulse-server cert generate --dns pulse.example.com --ip 10.0.0.5
+sudo systemctl restart pulse-server
+pulse-server cert fingerprint            # note this
+
+# copy /etc/pulse/server.crt to each agent host, then:
+sudo pulse-agent cert trust ./server.crt
+pulse-agent cert fingerprint             # must equal the server's
+sudo systemctl restart pulse-agent
+```
+
+File names make the role obvious on any host:
+
+| host | file | what it is |
+|---|---|---|
+| server | `/etc/pulse/server.crt` + `server.key` | the server's own identity (generated here) |
+| agent | `/etc/pulse/trusted-server.crt` | pinned copy of the server's cert (trusted here) |
+
+`cert generate` (server) writes `server.{crt,key}` (key mode 0600, chowned to the
+`pulse` user) and sets `[tls]` in `server.toml`. `cert trust <path>` (agent)
+installs `trusted-server.crt` and sets `[tls]` in `agent.toml`. `cert
+fingerprint` / `cert path` inspect the active cert on either side.
+
+**Users:** the server package runs the daemon as a static `pulse` user (created
+by the deb postinst) so it can read the private key. The agent has no secret and
+runs under systemd `DynamicUser=yes` — no account to manage.
 
 ## Logs
 

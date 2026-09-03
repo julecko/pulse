@@ -10,7 +10,9 @@ pub use config::Config;
 
 use std::thread;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+use transport::Sender;
 
 /// Run the agent: load config, set up logging, then sample and ship forever.
 pub fn run() {
@@ -30,15 +32,23 @@ pub fn run() {
     } else {
         info!(path = %loaded.path.display(), "no config file, using defaults");
     }
+    let sender = Sender::from_config(&cfg).unwrap_or_else(|err| {
+        eprintln!("tls: {err}");
+        std::process::exit(1);
+    });
     info!(
         server = %cfg.server,
         interval_secs = cfg.interval_secs,
+        tls = sender.is_tls(),
         "pulse agent starting"
     );
+    if !sender.is_tls() {
+        warn!("TLS is not configured — traffic is unencrypted (see `pulse-agent cert trust`)");
+    }
 
     loop {
         let report = collectors::collect();
-        match transport::send(&cfg.server, &report) {
+        match sender.send(&report) {
             Ok(()) => info!(
                 sections = report.metrics.section_count(),
                 host = %report.host.hostname,
