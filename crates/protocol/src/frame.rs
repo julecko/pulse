@@ -1,6 +1,10 @@
 //! Framing: length-prefixed MessagePack over a raw byte stream (e.g. TCP).
 //!
 //! Layout: `[u32 big-endian body length][body bytes]`.
+//!
+//! The sync [`read_report`] / [`write_report`] work on any [`std::io`] stream.
+//! With the `async` feature, [`read_report_async`] / [`write_report_async`]
+//! provide the same framing over a tokio [`AsyncRead`]/[`AsyncWrite`].
 
 use std::io::{self, Read, Write};
 
@@ -18,7 +22,6 @@ pub enum ProtocolError {
     FrameTooLarge(u32),
 }
 
-/// Serialize `report` into a single length-prefixed frame.
 pub fn encode(report: &Report) -> Result<Vec<u8>, ProtocolError> {
     let body = rmp_serde::to_vec_named(report)?;
     if body.len() as u64 > MAX_FRAME_LEN as u64 {
@@ -30,16 +33,11 @@ pub fn encode(report: &Report) -> Result<Vec<u8>, ProtocolError> {
     Ok(buf)
 }
 
-/// Write one framed `report` to `w`.
 pub fn write_report<W: Write>(w: &mut W, report: &Report) -> Result<(), ProtocolError> {
     w.write_all(&encode(report)?)?;
     Ok(())
 }
 
-/// Read exactly one framed report from `r`.
-///
-/// Returns `Ok(None)` on a clean EOF at a frame boundary (peer hung up between
-/// messages); any other short read is an error.
 pub fn read_report<R: Read>(r: &mut R) -> Result<Option<Report>, ProtocolError> {
     let mut len_buf = [0u8; 4];
     if !read_exact_or_eof(r, &mut len_buf)? {
@@ -54,12 +52,55 @@ pub fn read_report<R: Read>(r: &mut R) -> Result<Option<Report>, ProtocolError> 
     Ok(Some(rmp_serde::from_slice(&body)?))
 }
 
-/// Fill `buf` from `r`. Returns `Ok(false)` if EOF hits before the first byte,
-/// `Ok(true)` once `buf` is full, and an error on EOF partway through.
 fn read_exact_or_eof<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<bool> {
     let mut filled = 0;
     while filled < buf.len() {
         match r.read(&mut buf[filled..])? {
+            0 if filled == 0 => return Ok(false),
+            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+            n => filled += n,
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(feature = "async")]
+pub async fn write_report_async<W>(w: &mut W, report: &Report) -> Result<(), ProtocolError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    w.write_all(&encode(report)?).await?;
+    Ok(())
+}
+
+#[cfg(feature = "async")]
+pub async fn read_report_async<R>(r: &mut R) -> Result<Option<Report>, ProtocolError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut len_buf = [0u8; 4];
+    if !async_read_exact_or_eof(r, &mut len_buf).await? {
+        return Ok(None);
+    }
+    let len = u32::from_be_bytes(len_buf);
+    if len > MAX_FRAME_LEN {
+        return Err(ProtocolError::FrameTooLarge(len));
+    }
+    let mut body = vec![0u8; len as usize];
+    tokio::io::AsyncReadExt::read_exact(r, &mut body).await?;
+    Ok(Some(rmp_serde::from_slice(&body)?))
+}
+
+#[cfg(feature = "async")]
+async fn async_read_exact_or_eof<R>(r: &mut R, buf: &mut [u8]) -> io::Result<bool>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut filled = 0;
+    while filled < buf.len() {
+        match r.read(&mut buf[filled..]).await? {
             0 if filled == 0 => return Ok(false),
             0 => return Err(io::ErrorKind::UnexpectedEof.into()),
             n => filled += n,

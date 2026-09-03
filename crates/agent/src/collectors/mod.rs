@@ -1,16 +1,9 @@
-//! Collectors each fill in one slice of [`protocol::Metrics`].
-//!
-//! They all implement the same [`Collector`] trait and write *into* a shared
-//! `Metrics` value rather than returning their own type, so the agent can hold
-//! them in one `Vec<Box<dyn Collector>>` and run them in a loop. A collector
-//! failing is logged and skipped; it never aborts the whole report.
-
 mod collector;
 mod cpu;
 mod disk;
-mod memory;
 #[cfg(target_os = "linux")]
 mod linux;
+mod memory;
 
 pub use collector::{Collector, Context};
 
@@ -29,7 +22,6 @@ fn registry() -> Vec<Box<dyn Collector>> {
     collectors
 }
 
-/// Run every registered collector and assemble a single [`Report`].
 pub fn collect() -> Report {
     let mut ctx = Context::new();
     let mut metrics = Metrics::default();

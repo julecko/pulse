@@ -7,3 +7,8 @@ edition = "2024"
 serde = { version = "1.0.229", features = ["derive"] }
 rmp-serde = "1.3.0"
 thiserror = "2.0.9"
+tokio = { version = "1", default-features = false, features = ["io-util"], optional = true }
+
+[features]
+# Adds `read_report_async` / `write_report_async` for tokio byte streams.
+async = ["dep:tokio"]

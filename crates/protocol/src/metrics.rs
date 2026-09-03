@@ -1,9 +1,5 @@
-//! The collected payload and its per-subsystem structs.
-
 use serde::{Deserialize, Serialize};
 
-/// The collected payload. Add a field here + a collector in the agent to grow
-/// the protocol; `#[serde(default)]` keeps older consumers able to parse it.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Metrics {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -12,13 +8,11 @@ pub struct Metrics {
     pub memory: Option<MemoryInfo>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub disks: Vec<DiskInfo>,
-    /// Present only on Linux hosts.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub linux: Option<LinuxInfo>,
 }
 
 impl Metrics {
-    /// How many subsystems this payload actually carries data for.
     pub fn section_count(&self) -> usize {
         self.cpu.is_some() as usize
             + self.memory.is_some() as usize
@@ -53,7 +47,6 @@ pub struct DiskInfo {
     pub removable: bool,
 }
 
-/// Linux-only extras that have no meaningful cross-platform equivalent.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinuxInfo {
     pub load_avg_one: f64,

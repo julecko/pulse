@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-protocol = { path = "../protocol" }
+protocol = { path = "../protocol", features = ["async"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "macros", "io-util"] }

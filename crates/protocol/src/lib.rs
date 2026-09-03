@@ -1,11 +1,3 @@
-//! Wire contract shared by the agent (producer) and the server (consumer).
-//!
-//! Everything an agent collects ends up in a single [`Report`]. Each subsystem
-//! is its own struct; optional subsystems are `Option<T>` so a report only
-//! carries what a given OS could actually produce. Variable-length data
-//! (per-core stats, disk lists, ...) is just `Vec<T>` — the serializer handles
-//! the length framing, so callers never manage sizes by hand.
-//!
 //! Module layout:
 //! - [`report`]  — the top-level [`Report`] envelope and [`HostInfo`].
 //! - [`metrics`] — the [`Metrics`] payload and its per-subsystem structs.
@@ -16,6 +8,8 @@ mod metrics;
 mod report;
 
 pub use frame::{ProtocolError, encode, read_report, write_report};
+#[cfg(feature = "async")]
+pub use frame::{read_report_async, write_report_async};
 pub use metrics::{CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics};
 pub use report::{HostInfo, Report};
 
