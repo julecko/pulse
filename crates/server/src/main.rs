@@ -1,3 +1,4 @@
+mod config;
 mod connection;
 mod registry;
 
@@ -8,13 +9,21 @@ use tokio::net::TcpListener;
 
 use registry::Registry;
 
-const DEFAULT_BIND: &str = "127.0.0.1:9000";
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> io::Result<()> {
-    let bind = std::env::var("PULSE_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
-    let listener = TcpListener::bind(&bind).await?;
-    println!("pulse server listening on {bind}");
+    let loaded = pulse_config::load::<config::Config>("server").unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
+    if loaded.found {
+        println!("config: loaded {}", loaded.path.display());
+    } else {
+        println!("config: none at {}, using defaults", loaded.path.display());
+    }
+    let cfg = loaded.config;
+
+    let listener = TcpListener::bind(&cfg.bind).await?;
+    println!("pulse server listening on {}", cfg.bind);
 
     let registry = Arc::new(Mutex::new(Registry::default()));
 

@@ -10,5 +10,6 @@ members = [
     "crates/agent",
     "crates/server",
     "crates/protocol",
+    "crates/pulse-config",
 ]
 resolver = "3"

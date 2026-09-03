@@ -1,0 +1,5 @@
+# pulse server config — install to /etc/pulse/server.toml
+# (debug builds instead read ./server.toml next to the executable)
+
+# Address the TCP listener binds to.
+bind = "0.0.0.0:9000"

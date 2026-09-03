@@ -1,0 +1,17 @@
+[Unit]
+Description=pulse metrics server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/pulse-server
+Restart=on-failure
+DynamicUser=yes
+# Config is read from /etc/pulse/server.toml
+ConfigurationDirectory=pulse
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

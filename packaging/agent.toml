@@ -1,0 +1,8 @@
+# pulse agent config — install to /etc/pulse/agent.toml
+# (debug builds instead read ./agent.toml next to the executable)
+
+# host:port of the pulse server to ship reports to.
+server = "127.0.0.1:9000"
+
+# How often to collect and send a report, in seconds.
+interval_secs = 5

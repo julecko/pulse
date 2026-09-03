@@ -1,0 +1,20 @@
+[Unit]
+Description=pulse metrics agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/pulse-agent
+Restart=on-failure
+DynamicUser=yes
+# Config is read from /etc/pulse/agent.toml
+ConfigurationDirectory=pulse
+# machine id is persisted here when /etc/machine-id is unavailable
+StateDirectory=pulse
+Environment=XDG_STATE_HOME=/var/lib
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
