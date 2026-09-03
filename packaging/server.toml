@@ -19,6 +19,18 @@ per_ip_per_minute = 600
 # dropped (0 = no timeout).
 connection_timeout_secs = 15
 
+[storage]
+# Persist every received report to a local SQLite database so history survives
+# restarts. Disable to keep only the in-memory view.
+enabled = true
+# Database file. Empty => /var/lib/pulse/history.db (the systemd StateDirectory);
+# next to the executable in debug builds.
+path = ""
+# Days of history to keep. Rows older than this are pruned automatically.
+retention_days = 7
+# How often the pruner runs, in seconds (minimum 60).
+prune_interval_secs = 3600
+
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)
 level = "info"

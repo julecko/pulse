@@ -21,6 +21,10 @@ pub use log::LogConfig;
 /// Standard release location for config files.
 pub const SYSTEM_DIR: &str = "/etc/pulse";
 
+/// Standard release location for mutable state (the history database, spool
+/// files). Matches `StateDirectory=pulse` in the systemd units.
+pub const SYSTEM_STATE_DIR: &str = "/var/lib/pulse";
+
 /// Outcome of [`load`]: the parsed config plus where it came from.
 pub struct Loaded<T> {
     pub config: T,
@@ -64,6 +68,30 @@ pub fn dir(app: &str) -> PathBuf {
 pub fn tls_dir(app: &str) -> PathBuf {
     let nested = dir(app).join("tls");
     if nested.is_dir() { nested } else { dir(app) }
+}
+
+/// Directory for this app's mutable state (databases, spool files).
+///
+/// - `PULSE_<APP>_STATE` overrides it outright.
+/// - debug builds: next to the executable (matches [`path`]).
+/// - release builds: [`SYSTEM_STATE_DIR`] (`/var/lib/pulse`, the systemd
+///   `StateDirectory`).
+pub fn state_dir(app: &str) -> PathBuf {
+    let env_key = format!("PULSE_{}_STATE", app.to_uppercase());
+    if let Ok(p) = std::env::var(&env_key) {
+        return PathBuf::from(p);
+    }
+
+    if cfg!(debug_assertions) {
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            return dir.to_path_buf();
+        }
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(SYSTEM_STATE_DIR)
+    }
 }
 
 pub fn load<T: DeserializeOwned + Default>(app: &str) -> Result<Loaded<T>, Error> {

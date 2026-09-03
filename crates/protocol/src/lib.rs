@@ -7,7 +7,7 @@ mod frame;
 mod metrics;
 mod report;
 
-pub use frame::{ProtocolError, encode, read_report, write_report};
+pub use frame::{ProtocolError, decode_body, encode, encode_body, read_report, write_report};
 #[cfg(feature = "async")]
 pub use frame::{read_report_async, write_report_async};
 pub use metrics::{CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics};

@@ -15,7 +15,35 @@ pub struct Config {
     #[serde(default)]
     pub limits: Limits,
     #[serde(default)]
+    pub storage: Storage,
+    #[serde(default)]
     pub log: LogConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Storage {
+    /// Persist every received report to a local SQLite database so history
+    /// survives restarts. When false the server keeps only its in-memory view.
+    pub enabled: bool,
+    /// Database file. Empty => `<state dir>/history.db` (`/var/lib/pulse` under
+    /// systemd, next to the executable in debug builds).
+    pub path: String,
+    /// Days of history to keep; rows older than this are pruned automatically.
+    pub retention_days: u32,
+    /// How often the pruner runs, in seconds (clamped to a 60s minimum).
+    pub prune_interval_secs: u64,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: String::new(),
+            retention_days: 7,
+            prune_interval_secs: 3600,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +74,7 @@ impl Default for Config {
             bind: "127.0.0.1:9000".to_string(),
             tls: false,
             limits: Limits::default(),
+            storage: Storage::default(),
             log: LogConfig::default(),
         }
     }

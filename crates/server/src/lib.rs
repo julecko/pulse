@@ -5,11 +5,13 @@ mod config;
 mod connection;
 mod limits;
 mod registry;
+mod store;
 
 pub use config::Config;
 
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,6 +22,7 @@ use tracing::{error, info, warn};
 
 use limits::RateLimiter;
 use registry::Registry;
+use store::{StoreHandle, now_unix_ms};
 
 /// Run the server: load config, set up logging, accept connections forever.
 pub async fn run() -> io::Result<()> {
@@ -38,6 +41,35 @@ pub async fn run() -> io::Result<()> {
         info!(path = %loaded.path.display(), "loaded config");
     } else {
         info!(path = %loaded.path.display(), "no config file, using defaults");
+    }
+
+    let store = if cfg.storage.enabled {
+        let path = if cfg.storage.path.is_empty() {
+            pulse_config::state_dir("server").join("history.db")
+        } else {
+            PathBuf::from(&cfg.storage.path)
+        };
+        match StoreHandle::open_sqlite(&path) {
+            Ok(store) => {
+                info!(
+                    path = %path.display(),
+                    retention_days = cfg.storage.retention_days,
+                    "history storage enabled"
+                );
+                store
+            }
+            Err(err) => {
+                eprintln!("storage: {err}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        info!("history storage disabled (storage.enabled = false)");
+        StoreHandle::noop()
+    };
+
+    if store.is_persistent() {
+        spawn_pruner(store.clone(), &cfg.storage);
     }
 
     let acceptor: Option<TlsAcceptor> = if cfg.tls {
@@ -103,9 +135,10 @@ pub async fn run() -> io::Result<()> {
 
         let registry = Arc::clone(&registry);
         let acceptor = acceptor.clone();
+        let store = store.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let work = drive(acceptor, tcp, peer, registry);
+            let work = drive(acceptor, tcp, peer, registry, store);
             match timeout {
                 Some(dur) => {
                     if tokio::time::timeout(dur, work).await.is_err() {
@@ -123,21 +156,42 @@ async fn drive(
     tcp: TcpStream,
     peer: SocketAddr,
     registry: Arc<Mutex<Registry>>,
+    store: StoreHandle,
 ) {
     match acceptor {
         Some(acceptor) => match acceptor.accept(tcp).await {
-            Ok(tls) => serve(tls, peer, registry).await,
+            Ok(tls) => serve(tls, peer, registry, store).await,
             Err(err) => warn!(%peer, %err, "TLS handshake failed"),
         },
-        None => serve(tcp, peer, registry).await,
+        None => serve(tcp, peer, registry, store).await,
     }
 }
 
-async fn serve<S>(stream: S, peer: SocketAddr, registry: Arc<Mutex<Registry>>)
+async fn serve<S>(stream: S, peer: SocketAddr, registry: Arc<Mutex<Registry>>, store: StoreHandle)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    if let Err(err) = connection::handle(stream, peer, registry).await {
+    if let Err(err) = connection::handle(stream, peer, registry, store).await {
         error!(%peer, %err, "connection error");
     }
+}
+
+/// Background task: every `prune_interval_secs` (min 60s), delete report rows
+/// older than the retention window. `tokio::time::interval` fires immediately,
+/// so a stale DB is trimmed at startup.
+fn spawn_pruner(store: StoreHandle, storage: &config::Storage) {
+    let retention_ms = storage.retention_days as u64 * 86_400_000;
+    let period = Duration::from_secs(storage.prune_interval_secs.max(60));
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(period);
+        loop {
+            tick.tick().await;
+            let cutoff = now_unix_ms().saturating_sub(retention_ms);
+            match store.prune(cutoff).await {
+                Ok(0) => {}
+                Ok(n) => info!(deleted = n, "pruned reports past retention"),
+                Err(err) => warn!(%err, "prune failed"),
+            }
+        }
+    });
 }

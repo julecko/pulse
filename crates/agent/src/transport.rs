@@ -54,6 +54,10 @@ impl Sender {
             None => {
                 let mut stream = tcp;
                 protocol::write_report(&mut stream, report).map_err(io::Error::other)?;
+                // Half-close so the server's read loop sees EOF after this one
+                // report (the TLS path does the same with close_notify). Without
+                // it both ends block until our read timeout fires.
+                stream.shutdown(std::net::Shutdown::Write)?;
                 drain_to_eof(&mut stream)
             }
             Some(config) => {

@@ -22,8 +22,19 @@ pub enum ProtocolError {
     FrameTooLarge(u32),
 }
 
+/// MessagePack-encode a report's body (no length prefix). This is the exact
+/// payload [`encode`] frames; stored verbatim as the `body` blob by the server.
+pub fn encode_body(report: &Report) -> Result<Vec<u8>, ProtocolError> {
+    Ok(rmp_serde::to_vec_named(report)?)
+}
+
+/// Decode a body produced by [`encode_body`] (or the framed body from [`encode`]).
+pub fn decode_body(bytes: &[u8]) -> Result<Report, ProtocolError> {
+    Ok(rmp_serde::from_slice(bytes)?)
+}
+
 pub fn encode(report: &Report) -> Result<Vec<u8>, ProtocolError> {
-    let body = rmp_serde::to_vec_named(report)?;
+    let body = encode_body(report)?;
     if body.len() as u64 > MAX_FRAME_LEN as u64 {
         return Err(ProtocolError::FrameTooLarge(body.len() as u32));
     }

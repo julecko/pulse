@@ -8,12 +8,14 @@ use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tracing::{info, warn};
 
 use crate::registry::{Registry, Verdict};
+use crate::store::{StoreHandle, now_unix_ms};
 
 #[tracing::instrument(skip_all, fields(peer = %peer))]
 pub async fn handle<S>(
     stream: S,
     peer: SocketAddr,
     registry: Arc<Mutex<Registry>>,
+    store: StoreHandle,
 ) -> Result<(), ProtocolError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -23,6 +25,7 @@ where
     let mut seq = 0usize;
     let mut machine_id = String::new();
     while let Some(report) = protocol::read_report_async(&mut reader).await? {
+        let recv_ms = now_unix_ms();
         seq += 1;
         machine_id = report.host.machine_id.clone();
 
@@ -45,6 +48,15 @@ where
         // terminal (never routed through tracing / the log file).
         #[cfg(debug_assertions)]
         print!("{}", render(&peer, seq, total, &report));
+
+        // Persist for history. A storage failure is logged, not fatal — the
+        // live path (registry / event) has already succeeded.
+        if let Err(err) = store
+            .insert_report(Arc::new(report), recv_ms, peer.ip())
+            .await
+        {
+            warn!(%err, "history insert failed");
+        }
     }
 
     if seq == 0 {
