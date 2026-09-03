@@ -1,8 +1,9 @@
 //! `pulse-<role> cert ...` — mutual-TLS certificate management.
 //!
-//! Files live next to the config file:
-//!   server: `server.crt` `server.key` `trusted-agents/*.crt`
-//!   agent:  `agent.crt`  `agent.key`  `trusted-server.crt`
+//! Files live in a `tls/` subfolder of the config directory (created by
+//! `cert generate`; falls back to the flat config dir for pre-`tls/` installs):
+//!   server: `tls/server.crt` `tls/server.key` `tls/trusted-agents/*.crt`
+//!   agent:  `tls/agent.crt`  `tls/agent.key`  `tls/trusted-server.crt`
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -47,24 +48,40 @@ where
     }
 }
 
+/// Directory holding this role's TLS material. Resolves to `<config dir>/tls/`
+/// once it exists (created by `cert generate`), otherwise the flat config dir so
+/// deployments on the old layout keep working.
+fn tls_dir(app: App) -> PathBuf {
+    pulse_config::tls_dir(app.name)
+}
+
 fn own_cert(app: App) -> PathBuf {
-    app.dir().join(match app.role {
+    tls_dir(app).join(match app.role {
         Role::Server => SERVER_CERT,
         Role::Agent => AGENT_CERT,
     })
 }
 
 fn own_key(app: App) -> PathBuf {
-    app.dir().join(match app.role {
+    tls_dir(app).join(match app.role {
         Role::Server => SERVER_KEY,
         Role::Agent => AGENT_KEY,
     })
 }
 
 fn generate(app: App, dns: &[String], ip: &[String], force: bool) -> Result<ExitCode, String> {
+    // New certs always land in the dedicated `tls/` subfolder. Creating it here
+    // also makes `tls_dir()` (and every later `cert` command) resolve to it.
+    let dir = app.dir().join("tls");
+    fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+
     let cert_path = own_cert(app);
     let key_path = own_key(app);
-    if !force && (cert_path.exists() || key_path.exists()) {
+    let legacy_cert = app.dir().join(cert_path.file_name().unwrap_or_default());
+    let legacy_key = app.dir().join(key_path.file_name().unwrap_or_default());
+    if !force
+        && (cert_path.exists() || key_path.exists() || legacy_cert.exists() || legacy_key.exists())
+    {
         return Err(format!(
             "{} or {} already exists (use --force)",
             cert_path.display(),
@@ -73,11 +90,10 @@ fn generate(app: App, dns: &[String], ip: &[String], force: bool) -> Result<Exit
     }
 
     let (cert_pem, key_pem) = self_signed(app.role, dns, ip)?;
-    let dir = app.dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     write_mode(&cert_path, cert_pem.as_bytes(), 0o644)?;
     write_mode(&key_path, key_pem.as_bytes(), 0o600)?;
     if let Some(user) = app.service_user {
+        chown_to(&dir, user);
         chown_to(&cert_path, user);
         chown_to(&key_path, user);
     }
@@ -119,7 +135,7 @@ where
     let fp = pulse_config::tls::fingerprint(&certs[0]);
     let pem = fs::read(src).map_err(|e| format!("reading {}: {e}", src.display()))?;
 
-    let dir = app.dir();
+    let dir = tls_dir(app);
     let dest = dir.join(TRUSTED_SERVER);
     fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     write_mode(&dest, &pem, 0o644)?;
@@ -154,7 +170,7 @@ where
             .replace(':', "")
             .to_lowercase(),
     };
-    let store = app.dir().join(TRUSTED_AGENTS);
+    let store = tls_dir(app).join(TRUSTED_AGENTS);
     fs::create_dir_all(&store).map_err(|e| format!("creating {}: {e}", store.display()))?;
     if let Some(user) = app.service_user {
         chown_to(&store, user);
@@ -177,7 +193,7 @@ fn list(app: App) -> Result<ExitCode, String> {
     if app.role != Role::Server {
         return Err("`cert list` is a server command".into());
     }
-    let store = app.dir().join(TRUSTED_AGENTS);
+    let store = tls_dir(app).join(TRUSTED_AGENTS);
     let entries = match fs::read_dir(&store) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -213,7 +229,7 @@ fn revoke(app: App, id: &str) -> Result<ExitCode, String> {
     if app.role != Role::Server {
         return Err("`cert revoke` is a server command".into());
     }
-    let store = app.dir().join(TRUSTED_AGENTS);
+    let store = tls_dir(app).join(TRUSTED_AGENTS);
     let entries = fs::read_dir(&store).map_err(|e| format!("reading {}: {e}", store.display()))?;
     let mut removed = 0;
     for entry in entries {

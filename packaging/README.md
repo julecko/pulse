@@ -75,14 +75,27 @@ with certificate pinning both ways**:
 A wrong/missing/unapproved certificate on either side aborts the handshake, and
 both ends log the rejection. There is no CA.
 
-### Files (all next to the config file)
+### Files (in a `tls/` subfolder of the config directory)
+
+`cert generate` creates `/etc/pulse/tls/` and puts everything there:
 
 | host | files | role |
 |---|---|---|
-| server | `server.crt` + `server.key` | the server's own identity |
-| server | `trusted-agents/*.crt` | one file per approved agent |
-| agent | `agent.crt` + `agent.key` | the agent's own identity |
-| agent | `trusted-server.crt` | pinned copy of the server's cert |
+| server | `tls/server.crt` + `tls/server.key` | the server's own identity |
+| server | `tls/trusted-agents/*.crt` | one file per approved agent |
+| agent | `tls/agent.crt` + `tls/agent.key` | the agent's own identity |
+| agent | `tls/trusted-server.crt` | pinned copy of the server's cert |
+
+Deployments created before the `tls/` layout (cert files flat in `/etc/pulse/`)
+keep working — the daemons and `cert` commands fall back to the flat location
+when `tls/` is absent. To adopt the new layout on such a host:
+
+```sh
+sudo mkdir /etc/pulse/tls
+sudo mv /etc/pulse/{server,agent}.crt /etc/pulse/{server,agent}.key \
+        /etc/pulse/trusted-agents /etc/pulse/trusted-server.crt /etc/pulse/tls/ 2>/dev/null
+sudo chown -R pulse:pulse /etc/pulse/tls
+```
 
 ### Setup
 

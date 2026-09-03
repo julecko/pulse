@@ -48,12 +48,22 @@ pub fn path(app: &str) -> PathBuf {
     }
 }
 
-/// Directory that holds `<app>.toml` — also where TLS cert/key files live.
+/// Directory that holds `<app>.toml`.
 pub fn dir(app: &str) -> PathBuf {
     path(app)
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Directory that holds this role's TLS material (own cert/key + trusted certs).
+///
+/// Prefers a dedicated `tls/` subfolder of the config directory. Falls back to
+/// the flat config directory when `tls/` does not exist, so deployments created
+/// under the old layout keep working until their next `cert` command.
+pub fn tls_dir(app: &str) -> PathBuf {
+    let nested = dir(app).join("tls");
+    if nested.is_dir() { nested } else { dir(app) }
 }
 
 pub fn load<T: DeserializeOwned + Default>(app: &str) -> Result<Loaded<T>, Error> {

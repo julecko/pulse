@@ -21,7 +21,7 @@ pub struct Sender {
 impl Sender {
     pub fn from_config(cfg: &Config) -> io::Result<Self> {
         let tls = if cfg.tls {
-            let dir = pulse_config::dir("agent");
+            let dir = pulse_config::tls_dir("agent");
             Some(
                 pulse_config::tls::pinned_client_config(
                     &dir.join("trusted-server.crt"),

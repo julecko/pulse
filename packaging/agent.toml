@@ -9,8 +9,8 @@ interval_secs = 5
 
 # Mutual TLS 1.3. Set by `pulse-agent cert generate` + `cert trust`; leave false
 # for a plaintext link. When true, the agent reads agent.crt / agent.key /
-# trusted-server.crt from this directory, pins the server, and presents its own
-# certificate (which the server admin must approve).
+# trusted-server.crt from the tls/ subfolder of this directory, pins the server,
+# and presents its own certificate (which the server admin must approve).
 tls = false
 
 [log]

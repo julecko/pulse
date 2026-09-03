@@ -41,7 +41,7 @@ pub async fn run() -> io::Result<()> {
     }
 
     let acceptor: Option<TlsAcceptor> = if cfg.tls {
-        let dir = pulse_config::dir("server");
+        let dir = pulse_config::tls_dir("server");
         let server_config = pulse_config::tls::server_config(
             &dir.join("server.crt"),
             &dir.join("server.key"),
