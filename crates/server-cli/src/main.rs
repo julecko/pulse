@@ -5,10 +5,7 @@ fn main() -> ExitCode {
         name: "server",
         unit: "pulse-server",
         daemon: "/usr/lib/pulse/pulse-serverd",
-        tls: pulse_cli::Tls::Server {
-            cert: "server.crt",
-            key: "server.key",
-        },
+        role: pulse_cli::Role::Server,
         service_user: Some("pulse"),
     })
 }

@@ -66,38 +66,61 @@ table (`level`, `file`, `ansi`, `rotation`, `keep_files`) and an optional
 
 ## TLS / authentication
 
-The agent -> server link is plaintext unless you configure TLS. When configured
-it is TLS 1.3 with **certificate pinning**: the server has a self-signed cert +
-private key, the agent pins that exact cert. An agent with the wrong cert (or
-none) cannot complete the handshake — it is rejected and no data flows.
+`tls = false` → plaintext, unauthenticated. `tls = true` → **mutual TLS 1.3
+with certificate pinning both ways**:
+
+- the agent pins the server's cert — it only talks to that server;
+- the server pins a set of approved agent certs — it only accepts those agents.
+
+A wrong/missing/unapproved certificate on either side aborts the handshake, and
+both ends log the rejection. There is no CA.
+
+### Files (all next to the config file)
+
+| host | files | role |
+|---|---|---|
+| server | `server.crt` + `server.key` | the server's own identity |
+| server | `trusted-agents/*.crt` | one file per approved agent |
+| agent | `agent.crt` + `agent.key` | the agent's own identity |
+| agent | `trusted-server.crt` | pinned copy of the server's cert |
+
+### Setup
 
 ```sh
-# on the server host
+# --- server host ---
 sudo pulse-server cert generate --dns pulse.example.com --ip 10.0.0.5
-sudo systemctl restart pulse-server
-pulse-server cert fingerprint            # note this
+sudo pulse-server cert pem                 # -> copy this to each agent as server.crt
 
-# copy /etc/pulse/server.crt to each agent host, then:
-sudo pulse-agent cert trust ./server.crt
-pulse-agent cert fingerprint             # must equal the server's
-sudo systemctl restart pulse-agent
+# --- each agent host ---
+sudo pulse-agent cert generate
+sudo pulse-agent cert trust ./server.crt   # pin the server; turns tls on
+sudo pulse-agent cert pem                  # -> send this to the server admin
+
+# --- server host: approve each agent ---
+sudo pulse-server cert approve ./agent-box1.crt --name box1   # turns tls on
+sudo pulse-server cert list
+
+sudo systemctl restart pulse-server        # and pulse-agent on each agent
 ```
 
-File names make the role obvious on any host:
+`cert fingerprint` prints this host's own cert hash; `cert revoke <name|fp>`
+removes an approved agent. Enabling `tls` happens automatically on the first
+`cert trust` (agent) / `cert approve` (server).
 
-| host | file | what it is |
-|---|---|---|
-| server | `/etc/pulse/server.crt` + `server.key` | the server's own identity (generated here) |
-| agent | `/etc/pulse/trusted-server.crt` | pinned copy of the server's cert (trusted here) |
+Rejection is confirmed: the agent logs `failed to send report … AccessDenied`
+and the server logs `TLS handshake failed … invalid peer certificate` when an
+unapproved agent connects.
 
-`cert generate` (server) writes `server.{crt,key}` (key mode 0600, chowned to the
-`pulse` user) and sets `[tls]` in `server.toml`. `cert trust <path>` (agent)
-installs `trusted-server.crt` and sets `[tls]` in `agent.toml`. `cert
-fingerprint` / `cert path` inspect the active cert on either side.
+**Users:** both daemons run as a static `pulse` system user (deb postinst
+creates it), needed so each can read its own private key. `cert generate` chowns
+the generated files to it.
 
-**Users:** the server package runs the daemon as a static `pulse` user (created
-by the deb postinst) so it can read the private key. The agent has no secret and
-runs under systemd `DynamicUser=yes` — no account to manage.
+## Rate limiting (server)
+
+The `[limits]` table caps `max_connections` (concurrent, excess dropped),
+`per_ip_per_minute` (new connections per source IP, sliding 60s window), and
+`connection_timeout_secs` (handshake + one report, guards slow-loris). Checks
+run on the raw TCP accept, before the TLS handshake.
 
 ## Logs
 

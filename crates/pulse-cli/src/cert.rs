@@ -1,5 +1,8 @@
-//! `pulse-<role> cert ...` — self-signed certificate generation (server) and
-//! trust/pinning (agent).
+//! `pulse-<role> cert ...` — mutual-TLS certificate management.
+//!
+//! Files live next to the config file:
+//!   server: `server.crt` `server.key` `trusted-agents/*.crt`
+//!   agent:  `agent.crt`  `agent.key`  `trusted-server.crt`
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -9,48 +12,58 @@ use std::process::ExitCode;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::{App, CertCmd, Tls};
+use super::{App, CertCmd, Role};
+
+const SERVER_CERT: &str = "server.crt";
+const SERVER_KEY: &str = "server.key";
+const AGENT_CERT: &str = "agent.crt";
+const AGENT_KEY: &str = "agent.key";
+const TRUSTED_SERVER: &str = "trusted-server.crt";
+const TRUSTED_AGENTS: &str = "trusted-agents";
 
 pub fn run<C>(app: App, action: CertCmd) -> Result<ExitCode, String>
 where
     C: Serialize + DeserializeOwned + Default,
 {
     match action {
-        CertCmd::Generate { dns, ip, force } => generate::<C>(app, &dns, &ip, force),
-        CertCmd::Trust { path } => trust::<C>(app, &path),
+        CertCmd::Generate { dns, ip, force } => generate(app, &dns, &ip, force),
         CertCmd::Fingerprint => {
-            println!("{}", fingerprint_of(&active_cert(app))?);
+            println!("{}", fingerprint_of(&own_cert(app))?);
             Ok(ExitCode::SUCCESS)
         }
-        CertCmd::Path => {
-            println!("{}", active_cert(app).display());
+        CertCmd::Pem => {
+            let path = own_cert(app);
+            print!(
+                "{}",
+                fs::read_to_string(&path)
+                    .map_err(|e| format!("reading {}: {e}", path.display()))?
+            );
             Ok(ExitCode::SUCCESS)
         }
+        CertCmd::Trust { path } => trust::<C>(app, &path),
+        CertCmd::Approve { path, name } => approve::<C>(app, &path, name.as_deref()),
+        CertCmd::List => list(app),
+        CertCmd::Revoke { id } => revoke(app, &id),
     }
 }
 
-/// Path of the certificate this role reads at runtime.
-fn active_cert(app: App) -> PathBuf {
-    let name = match app.tls {
-        Tls::Server { cert, .. } | Tls::Agent { cert } => cert,
-    };
-    app.dir().join(name)
+fn own_cert(app: App) -> PathBuf {
+    app.dir().join(match app.role {
+        Role::Server => SERVER_CERT,
+        Role::Agent => AGENT_CERT,
+    })
 }
 
-fn generate<C>(app: App, dns: &[String], ip: &[String], force: bool) -> Result<ExitCode, String>
-where
-    C: Serialize + DeserializeOwned + Default,
-{
-    let (cert_name, key_name) = match app.tls {
-        Tls::Server { cert, key } => (cert, key),
-        Tls::Agent { .. } => {
-            return Err("`cert generate` is a server command; agents use `cert trust`".into());
-        }
-    };
+fn own_key(app: App) -> PathBuf {
+    app.dir().join(match app.role {
+        Role::Server => SERVER_KEY,
+        Role::Agent => AGENT_KEY,
+    })
+}
 
-    let dir = app.dir();
-    let cert_path = dir.join(cert_name);
-    let key_path = dir.join(key_name);
+fn generate(app: App, dns: &[String], ip: &[String], force: bool) -> Result<ExitCode, String> {
+    let cert_path = own_cert(app);
+    let key_path = own_key(app);
     if !force && (cert_path.exists() || key_path.exists()) {
         return Err(format!(
             "{} or {} already exists (use --force)",
@@ -59,7 +72,8 @@ where
         ));
     }
 
-    let (cert_pem, key_pem) = self_signed(dns, ip)?;
+    let (cert_pem, key_pem) = self_signed(app.role, dns, ip)?;
+    let dir = app.dir();
     fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     write_mode(&cert_path, cert_pem.as_bytes(), 0o644)?;
     write_mode(&key_path, key_pem.as_bytes(), 0o600)?;
@@ -68,23 +82,26 @@ where
         chown_to(&key_path, user);
     }
 
-    let config = pulse_config::path(app.name);
-    super::apply_sets::<C>(
-        &config,
-        &[
-            ("tls.cert", &cert_path.to_string_lossy()),
-            ("tls.key", &key_path.to_string_lossy()),
-        ],
-    )?;
-
     println!("wrote {}", cert_path.display());
     println!("wrote {}  (private key, mode 0600)", key_path.display());
     println!("fingerprint: {}", fingerprint_of(&cert_path)?);
     println!();
-    println!("next:");
-    println!("  1. restart the server");
-    println!("  2. copy {} to each agent host", cert_path.display());
-    println!("  3. on each agent:  pulse-agent cert trust <server.crt>");
+    match app.role {
+        Role::Server => {
+            println!("next:");
+            println!("  - hand this cert to agents:  pulse-server cert pem");
+            println!(
+                "  - approve each agent:        pulse-server cert approve <agent.crt> --name <id>"
+            );
+            println!("    (approving the first agent turns TLS on)");
+        }
+        Role::Agent => {
+            println!("next:");
+            println!("  - send this cert to the server admin:  pulse-agent cert pem");
+            println!("  - pin the server:                     pulse-agent cert trust <server.crt>");
+            println!("    (trusting the server turns TLS on)");
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -92,29 +109,146 @@ fn trust<C>(app: App, src: &Path) -> Result<ExitCode, String>
 where
     C: Serialize + DeserializeOwned + Default,
 {
-    let cert_name = match app.tls {
-        Tls::Agent { cert } => cert,
-        Tls::Server { .. } => {
-            return Err("`cert trust` is an agent command; servers use `cert generate`".into());
-        }
-    };
-
-    // Validate it is a certificate PEM before installing.
+    if app.role != Role::Agent {
+        return Err("`cert trust` is an agent command".into());
+    }
+    if !own_cert(app).exists() || !own_key(app).exists() {
+        return Err("run `pulse-agent cert generate` first".into());
+    }
     let certs = pulse_config::tls::load_certs(src).map_err(|e| e.to_string())?;
     let fp = pulse_config::tls::fingerprint(&certs[0]);
     let pem = fs::read(src).map_err(|e| format!("reading {}: {e}", src.display()))?;
 
     let dir = app.dir();
-    let dest = dir.join(cert_name);
+    let dest = dir.join(TRUSTED_SERVER);
     fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     write_mode(&dest, &pem, 0o644)?;
 
-    let config = pulse_config::path(app.name);
-    super::apply_sets::<C>(&config, &[("tls.cert", &dest.to_string_lossy())])?;
+    super::apply_sets::<C>(&pulse_config::path(app.name), &[("tls", "true")])?;
 
-    println!("trusted {}", dest.display());
+    println!("pinned server cert -> {}", dest.display());
     println!("fingerprint: {fp}");
     println!("must match `pulse-server cert fingerprint` on the server");
+    println!("TLS enabled — restart the agent to apply");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn approve<C>(app: App, src: &Path, name: Option<&str>) -> Result<ExitCode, String>
+where
+    C: Serialize + DeserializeOwned + Default,
+{
+    if app.role != Role::Server {
+        return Err("`cert approve` is a server command".into());
+    }
+    if !own_cert(app).exists() || !own_key(app).exists() {
+        return Err("run `pulse-server cert generate` first".into());
+    }
+    let certs = pulse_config::tls::load_certs(src).map_err(|e| e.to_string())?;
+    let fp = pulse_config::tls::fingerprint(&certs[0]);
+    let pem = fs::read(src).map_err(|e| format!("reading {}: {e}", src.display()))?;
+
+    let stem = match name {
+        Some(n) => sanitize(n),
+        None => fp
+            .trim_start_matches("sha256:")
+            .replace(':', "")
+            .to_lowercase(),
+    };
+    let store = app.dir().join(TRUSTED_AGENTS);
+    fs::create_dir_all(&store).map_err(|e| format!("creating {}: {e}", store.display()))?;
+    if let Some(user) = app.service_user {
+        chown_to(&store, user);
+    }
+    let dest = store.join(format!("{stem}.crt"));
+    write_mode(&dest, &pem, 0o644)?;
+    if let Some(user) = app.service_user {
+        chown_to(&dest, user);
+    }
+
+    super::apply_sets::<C>(&pulse_config::path(app.name), &[("tls", "true")])?;
+
+    println!("approved {} -> {}", stem, dest.display());
+    println!("fingerprint: {fp}");
+    println!("TLS enabled — restart the server to apply");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn list(app: App) -> Result<ExitCode, String> {
+    if app.role != Role::Server {
+        return Err("`cert list` is a server command".into());
+    }
+    let store = app.dir().join(TRUSTED_AGENTS);
+    let entries = match fs::read_dir(&store) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("no approved agents ({} does not exist)", store.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        Err(e) => return Err(format!("reading {}: {e}", store.display())),
+    };
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|x| x == "crt") {
+            let stem = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            rows.push((stem, fingerprint_of(&path)?));
+        }
+    }
+    rows.sort();
+    if rows.is_empty() {
+        println!("no approved agents");
+    } else {
+        for (name, fp) in rows {
+            println!("{name:<24} {fp}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn revoke(app: App, id: &str) -> Result<ExitCode, String> {
+    if app.role != Role::Server {
+        return Err("`cert revoke` is a server command".into());
+    }
+    let store = app.dir().join(TRUSTED_AGENTS);
+    let entries = fs::read_dir(&store).map_err(|e| format!("reading {}: {e}", store.display()))?;
+    let mut removed = 0;
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if !path.extension().is_some_and(|x| x == "crt") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let fp = fingerprint_of(&path)?;
+        if stem == id || fp == id || fp.to_lowercase().contains(&id.to_lowercase()) {
+            fs::remove_file(&path).map_err(|e| format!("removing {}: {e}", path.display()))?;
+            println!("revoked {stem}");
+            removed += 1;
+        }
+    }
+    if removed == 0 {
+        return Err(format!("no approved agent matches {id:?}"));
+    }
+    let left = fs::read_dir(&store)
+        .map(|e| {
+            e.filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "crt"))
+                .count()
+        })
+        .unwrap_or(0);
+    if left == 0 {
+        println!(
+            "warning: no approved agents remain — the server will refuse to start with tls=true"
+        );
+    }
+    println!("restart the server to apply");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -123,10 +257,13 @@ fn fingerprint_of(cert_path: &Path) -> Result<String, String> {
     Ok(pulse_config::tls::fingerprint(&certs[0]))
 }
 
-/// A self-signed leaf good for ~20 years. Always carries SAN `DNS:pulse`
-/// (the name the agent pins against) plus any extras.
-fn self_signed(dns: &[String], ip: &[String]) -> Result<(String, String), String> {
-    let mut names = vec![pulse_config::tls::PIN_SERVER_NAME.to_string()];
+/// A self-signed leaf good for ~20 years. Server certs also carry SAN
+/// `DNS:pulse` (the name the agent's verifier is handed).
+fn self_signed(role: Role, dns: &[String], ip: &[String]) -> Result<(String, String), String> {
+    let mut names = Vec::new();
+    if role == Role::Server {
+        names.push(pulse_config::tls::PIN_SERVER_NAME.to_string());
+    }
     names.extend(dns.iter().cloned());
 
     let mut params =
@@ -139,9 +276,13 @@ fn self_signed(dns: &[String], ip: &[String]) -> Result<(String, String), String
             .subject_alt_names
             .push(rcgen::SanType::IpAddress(parsed));
     }
+    let cn = match role {
+        Role::Server => "pulse-server",
+        Role::Agent => "pulse-agent",
+    };
     params
         .distinguished_name
-        .push(rcgen::DnType::CommonName, "pulse");
+        .push(rcgen::DnType::CommonName, cn);
     params.not_before = rcgen::date_time_ymd(2020, 1, 1);
     params.not_after = rcgen::date_time_ymd(2040, 1, 1);
 
@@ -158,12 +299,23 @@ fn write_mode(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
         .map_err(|e| format!("chmod {}: {e}", path.display()))
 }
 
-/// Best effort `chown user:user path` (silent — fails harmlessly when not root
-/// or the user doesn't exist yet).
+/// Best effort `chown user:user path` (silent — harmless when not root).
 fn chown_to(path: &Path, user: &str) {
     let _ = std::process::Command::new("chown")
         .arg(format!("{user}:{user}"))
         .arg(path)
         .stderr(std::process::Stdio::null())
         .status();
+}
+
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }

@@ -16,16 +16,10 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Where a role keeps its TLS files, relative to the config directory.
-#[derive(Clone, Copy)]
-pub enum Tls {
-    /// Server: holds the certificate and its private key.
-    Server {
-        cert: &'static str,
-        key: &'static str,
-    },
-    /// Agent: pins the server's certificate.
-    Agent { cert: &'static str },
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Server,
+    Agent,
 }
 
 /// Per-daemon descriptor supplied by each front-end binary.
@@ -37,8 +31,8 @@ pub struct App {
     pub unit: &'static str,
     /// Installed daemon path, used by `run`.
     pub daemon: &'static str,
-    /// TLS file layout for this role.
-    pub tls: Tls,
+    /// Which side of the link this is.
+    pub role: Role,
     /// System user the daemon runs as; generated key/cert are chowned to it.
     pub service_user: Option<&'static str>,
 }
@@ -46,10 +40,7 @@ pub struct App {
 impl App {
     /// Directory that holds this role's config + TLS files.
     fn dir(&self) -> PathBuf {
-        pulse_config::path(self.name)
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."))
+        pulse_config::dir(self.name)
     }
 }
 
@@ -113,7 +104,7 @@ enum ConfigCmd {
 
 #[derive(Subcommand)]
 enum CertCmd {
-    /// (server) Generate a self-signed cert + key and point the config at them.
+    /// Generate this host's own certificate + private key and enable TLS.
     Generate {
         /// Extra DNS name in the certificate (repeatable).
         #[arg(long, value_name = "NAME")]
@@ -125,15 +116,27 @@ enum CertCmd {
         #[arg(long)]
         force: bool,
     },
-    /// (agent) Trust a server certificate: copy it in and pin it.
+    /// Print the SHA-256 fingerprint of this host's own certificate.
+    Fingerprint,
+    /// Print this host's own certificate PEM (to hand to the other side).
+    Pem,
+    /// (agent) Pin the server's certificate.
     Trust {
         /// Path to the server's certificate PEM.
         path: PathBuf,
     },
-    /// Print the SHA-256 fingerprint of the active certificate.
-    Fingerprint,
-    /// Print the path of the active certificate.
-    Path,
+    /// (server) Approve an agent certificate.
+    Approve {
+        /// Path to the agent's certificate PEM.
+        path: PathBuf,
+        /// Label to file it under (default: the fingerprint).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// (server) List approved agent certificates.
+    List,
+    /// (server) Remove an approved agent certificate by name or fingerprint.
+    Revoke { id: String },
 }
 
 /// Entry point for a front-end binary.

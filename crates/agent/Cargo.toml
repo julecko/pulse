@@ -39,6 +39,7 @@ assets = [
     ["../../packaging/README.md", "usr/share/doc/pulse-agent/README.md", "644"],
 ]
 conf-files = ["/etc/pulse/agent.toml"]
-# empty dir — presence still makes cargo-deb generate the systemd postinst/etc.
+# packaging/deb/agent/postinst creates the `pulse` user; cargo-deb appends the
+# systemd fragments at the `#DEBHELPER#` marker.
 maintainer-scripts = "../../packaging/deb/agent"
 systemd-units = { unit-name = "pulse-agent", unit-scripts = "../../packaging", enable = false, start = false }

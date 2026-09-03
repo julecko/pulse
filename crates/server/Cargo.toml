@@ -16,7 +16,7 @@ name = "pulse_server"
 protocol = { path = "../protocol", features = ["async"] }
 pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "macros", "io-util"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "macros", "io-util", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tracing = "0.1"
 

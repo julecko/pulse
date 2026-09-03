@@ -7,11 +7,11 @@ server = "127.0.0.1:9000"
 # How often to collect and send a report, in seconds.
 interval_secs = 5
 
-# Encryption + server authentication. Copy the server's cert here and run
-# `pulse-agent cert trust /path/to/server.crt`. The agent then connects with
-# TLS 1.3 and refuses to talk to any server not presenting exactly this cert.
-# [tls]
-# cert = "/etc/pulse/trusted-server.crt"
+# Mutual TLS 1.3. Set by `pulse-agent cert generate` + `cert trust`; leave false
+# for a plaintext link. When true, the agent reads agent.crt / agent.key /
+# trusted-server.crt from this directory, pins the server, and presents its own
+# certificate (which the server admin must approve).
+tls = false
 
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)

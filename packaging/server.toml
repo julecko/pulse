@@ -4,12 +4,20 @@
 # Address the TCP listener binds to.
 bind = "0.0.0.0:9000"
 
-# Encryption. Run `pulse-server cert generate` to create these and fill in the
-# [tls] section below; without it the link is plaintext. Once set, the listener
-# only accepts TLS 1.3.
-# [tls]
-# cert = "/etc/pulse/server.crt"
-# key  = "/etc/pulse/server.key"
+# Mutual TLS 1.3. Set by `pulse-server cert generate` + `cert approve`; leave
+# false for a plaintext, unauthenticated link. When true, the daemon reads
+# server.crt / server.key / trusted-agents/ from this directory and only accepts
+# clients presenting an approved certificate.
+tls = false
+
+[limits]
+# Connections handled at once (0 = unlimited). Excess is dropped.
+max_connections = 1024
+# New connections accepted from one source IP per minute (0 = off).
+per_ip_per_minute = 600
+# Seconds a connection may take (TLS handshake + one report) before it is
+# dropped (0 = no timeout).
+connection_timeout_secs = 15
 
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)

@@ -6,8 +6,11 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/lib/pulse/pulse-agentd
 Restart=on-failure
-DynamicUser=yes
-# Config is read from /etc/pulse/agent.toml
+# Static user (not DynamicUser) so `pulse-agent cert generate` can chown the
+# client TLS key to an account the daemon can read. Created by the deb postinst.
+User=pulse
+Group=pulse
+# Config + TLS cert/key read from /etc/pulse/agent.toml
 ConfigurationDirectory=pulse
 # machine id is persisted here when /etc/machine-id is unavailable
 StateDirectory=pulse

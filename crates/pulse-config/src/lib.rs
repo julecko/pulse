@@ -48,6 +48,14 @@ pub fn path(app: &str) -> PathBuf {
     }
 }
 
+/// Directory that holds `<app>.toml` — also where TLS cert/key files live.
+pub fn dir(app: &str) -> PathBuf {
+    path(app)
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 pub fn load<T: DeserializeOwned + Default>(app: &str) -> Result<Loaded<T>, Error> {
     let path = path(app);
     match std::fs::read_to_string(&path) {
