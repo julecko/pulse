@@ -2,6 +2,10 @@
 name = "server"
 version = "0.1.0"
 edition = "2024"
+description = "pulse metrics server — ingests agent reports over TCP"
+license-file = "../../LICENSE"
+authors = ["Julecko <julecko@dilino.sk>"]
+publish = false
 
 [dependencies]
 protocol = { path = "../protocol", features = ["async"] }
@@ -9,3 +13,26 @@ pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = ["rt", "net", "macros", "io-util"] }
 tracing = "0.1"
+
+[package.metadata.deb]
+name = "pulse-server"
+maintainer = "Julecko <julecko@dilino.sk>"
+copyright = "2026, Julecko <julecko@dilino.sk>"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+Single-threaded async TCP server that accepts length-prefixed MessagePack
+metric reports from pulse agents, keyed by a stable per-machine id.
+"""
+depends = "$auto"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/server", "usr/bin/pulse-server", "755"],
+    ["../../packaging/server.toml", "etc/pulse/server.toml", "644"],
+    ["../../packaging/README.md", "usr/share/doc/pulse-server/README.md", "644"],
+]
+conf-files = ["/etc/pulse/server.toml"]
+# maintainer-scripts must be set (even to a dir with no scripts) for cargo-deb
+# to generate the systemd postinst/prerm/postrm from systemd-units below.
+maintainer-scripts = "../../packaging"
+systemd-units = { unit-name = "pulse-server", unit-scripts = "../../packaging", enable = false, start = false }

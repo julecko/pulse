@@ -2,6 +2,10 @@
 name = "agent"
 version = "0.1.0"
 edition = "2024"
+description = "pulse metrics agent — collects host metrics and ships them to a pulse server"
+license-file = "../../LICENSE"
+authors = ["Julecko <julecko@dilino.sk>"]
+publish = false
 
 [dependencies]
 protocol = { path = "../protocol" }
@@ -9,3 +13,26 @@ pulse-config = { path = "../pulse-config" }
 serde = { version = "1.0.229", features = ["derive"] }
 sysinfo = "0.38.4"
 tracing = "0.1"
+
+[package.metadata.deb]
+name = "pulse-agent"
+maintainer = "Julecko <julecko@dilino.sk>"
+copyright = "2026, Julecko <julecko@dilino.sk>"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+Samples CPU, memory, disk and Linux load/uptime on a configurable interval and
+sends each sample to a pulse server over TCP.
+"""
+depends = "$auto"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/agent", "usr/bin/pulse-agent", "755"],
+    ["../../packaging/agent.toml", "etc/pulse/agent.toml", "644"],
+    ["../../packaging/README.md", "usr/share/doc/pulse-agent/README.md", "644"],
+]
+conf-files = ["/etc/pulse/agent.toml"]
+# maintainer-scripts must be set (even to a dir with no scripts) for cargo-deb
+# to generate the systemd postinst/prerm/postrm from systemd-units below.
+maintainer-scripts = "../../packaging"
+systemd-units = { unit-name = "pulse-agent", unit-scripts = "../../packaging", enable = false, start = false }

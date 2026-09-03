@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/pulse-server
+ExecStart=/usr/bin/pulse-server
 Restart=on-failure
 DynamicUser=yes
 # Config is read from /etc/pulse/server.toml

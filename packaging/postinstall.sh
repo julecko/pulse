@@ -11,7 +11,8 @@
 
 set -euo pipefail
 
-PREFIX="${PREFIX:-/usr/local}"
+# /usr/bin to match the unit files' ExecStart= and the .deb layout.
+PREFIX="${PREFIX:-/usr}"
 CONF_DIR="/etc/pulse"
 UNIT_DIR="/etc/systemd/system"
 

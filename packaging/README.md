@@ -1,6 +1,29 @@
 # Packaging
 
-## Install (release)
+## Debian packages (recommended)
+
+```sh
+cargo install cargo-deb          # one-time
+packaging/build-deb.sh           # -> target/debian/pulse-{server,agent}_*.deb
+
+sudo apt install ./target/debian/pulse-server_0.1.0-1_amd64.deb
+sudo apt install ./target/debian/pulse-agent_0.1.0-1_amd64.deb
+```
+
+Each package installs `/usr/bin/pulse-<app>`, `/etc/pulse/<app>.toml` (a dpkg
+conffile — your edits survive upgrades), and
+`/lib/systemd/system/pulse-<app>.service`. The service is **not** enabled
+automatically:
+
+```sh
+sudoedit /etc/pulse/agent.toml
+sudo systemctl enable --now pulse-agent
+```
+
+Per-package `[package.metadata.deb]` lives in `crates/server/Cargo.toml` and
+`crates/agent/Cargo.toml`.
+
+## Install from a build tree (no packaging tools)
 
 ```sh
 cargo build --release
