@@ -10,6 +10,12 @@ interval_secs = 5
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)
 level = "info"
-# Explicit log file. If unset: stdout in debug, /var/log/pulse/agent.log in release.
+# Explicit log file. If unset: stderr in debug, /var/log/pulse/agent.log in release.
 # file = "/var/log/pulse/agent.log"
 ansi = false
+# Start a new file every: daily | hourly | minutely | never.
+# Rotated files get a date suffix, e.g. agent.2026-09-03.log
+rotation = "daily"
+# Keep at most this many rotated files (oldest deleted). 0 = keep all.
+# With rotation = "daily", ~= days of history.
+keep_files = 10

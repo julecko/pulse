@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -24,11 +25,24 @@ pub async fn handle(
         machine_id = report.host.machine_id.clone();
 
         let total = register(&registry, &report, peer);
+
+        // Structured event — this is what lands in /var/log/pulse in release.
+        let m = &report.metrics;
         info!(
-            "report #{seq} from {}\n{}",
-            report.host.hostname,
-            render(&peer, seq, total, &report)
+            report = seq,
+            host = %report.host.hostname,
+            machine_id = %report.host.machine_id,
+            seen = total,
+            cpu_pct = ?m.cpu.as_ref().map(|c| c.global_usage_percent),
+            mem_used_bytes = ?m.memory.as_ref().map(|mem| mem.used_bytes),
+            disks = m.disks.len(),
+            "report received"
         );
+
+        // Full human-readable device dump — debug builds only, straight to the
+        // terminal (never routed through tracing / the log file).
+        #[cfg(debug_assertions)]
+        print!("{}", render(&peer, seq, total, &report));
     }
 
     if seq == 0 {
@@ -83,7 +97,10 @@ fn register(registry: &Mutex<Registry>, report: &Report, peer: SocketAddr) -> u6
     seen.reports
 }
 
-/// Format one report as an indented, human-readable block.
+/// Format one report as an indented, human-readable block. Debug builds only —
+/// in release this data is not printed anywhere (see the structured event in
+/// `handle`).
+#[cfg(debug_assertions)]
 fn render(peer: &SocketAddr, seq: usize, total: u64, report: &Report) -> String {
     let rule = "─".repeat(64);
     let mut out = String::new();
@@ -195,12 +212,14 @@ fn render(peer: &SocketAddr, seq: usize, total: u64, report: &Report) -> String 
 }
 
 /// A 20-cell ASCII meter for a 0..=100 percentage.
+#[cfg(debug_assertions)]
 fn bar(pct: f32) -> String {
     let filled = ((pct / 100.0) * 20.0).round().clamp(0.0, 20.0) as usize;
     format!("[{}{}]", "█".repeat(filled), "·".repeat(20 - filled))
 }
 
 /// Bytes as a binary-prefixed, one-decimal string (`6.1 GiB`).
+#[cfg(debug_assertions)]
 fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
     let mut val = bytes as f64;
@@ -217,6 +236,7 @@ fn human_bytes(bytes: u64) -> String {
 }
 
 /// Seconds as `3d 4h 12m` (largest non-zero units only).
+#[cfg(debug_assertions)]
 fn human_duration(secs: u64) -> String {
     let days = secs / 86_400;
     let hours = (secs % 86_400) / 3_600;

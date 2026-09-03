@@ -61,7 +61,7 @@ Override with `PULSE_SERVER_CONFIG` / `PULSE_AGENT_CONFIG` (full path). A missin
 file is fine (defaults + a log line); a malformed file is fatal.
 
 Settings: server `bind`; agent `server`, `interval_secs`; both take a `[log]`
-table (`level`, `file`, `ansi`).
+table (`level`, `file`, `ansi`, `rotation`, `keep_files`).
 
 ## Logs
 
@@ -70,8 +70,21 @@ table (`level`, `file`, `ansi`).
 | debug   | that file      | stdout (terminal)         |
 | release | that file      | `/var/log/pulse/<app>.log`|
 
-`RUST_LOG` overrides `log.level` when set. With systemd, stdout is also captured:
-`journalctl -u pulse-agent -f`.
+If a configured file can't be opened, it warns and falls back to stderr. ANSI
+colour is auto-disabled when the terminal isn't a TTY. `RUST_LOG` overrides
+`log.level`. With systemd, stdout is also captured: `journalctl -u pulse-agent -f`.
+
+When logging to a file, `[log] rotation` (`daily`/`hourly`/`minutely`/`never`)
+starts a new dated file (`server.2026-09-03.log`) and `[log] keep_files` deletes
+the oldest beyond that count — so `rotation = "daily"`, `keep_files = 10` keeps
+~10 days. No `logrotate` config needed. Rotation is re-checked on every write, so
+a long-lived process rolls over at each period boundary (UTC), not just at
+startup.
+
+The server's full per-report device dump (host / CPU per-core / memory / disks /
+load) is printed to the **terminal in debug builds only**. Release builds emit
+just a one-line structured `report received` event (host, machine id, cpu %,
+mem, disk count) to the log.
 
 ## Crates & binaries
 
