@@ -1,33 +1,81 @@
-//! Per-connection handling: decode framed reports and pretty-print every one.
-
 use std::fmt::Write as _;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use protocol::{ProtocolError, Report};
 use tokio::io::BufReader;
 use tokio::net::TcpStream;
 
-/// Read every framed report on `stream` until the peer hangs up.
-pub async fn handle(stream: TcpStream, peer: SocketAddr) -> Result<(), ProtocolError> {
+use crate::registry::{Registry, Verdict};
+
+pub async fn handle(
+    stream: TcpStream,
+    peer: SocketAddr,
+    registry: Arc<Mutex<Registry>>,
+) -> Result<(), ProtocolError> {
     let mut reader = BufReader::new(stream);
 
-    // A connection may carry one report or a stream of them.
     let mut seq = 0usize;
+    let mut machine_id = String::new();
     while let Some(report) = protocol::read_report_async(&mut reader).await? {
         seq += 1;
-        print!("{}", render(&peer, seq, &report));
+        machine_id = report.host.machine_id.clone();
+
+        let (total, notes) = register(&registry, &report, peer);
+        for line in notes {
+            println!("{line}");
+        }
+        print!("{}", render(&peer, seq, total, &report));
     }
 
     if seq == 0 {
         println!("· {peer} connected but sent no reports");
     } else {
-        println!("· {peer} disconnected after {seq} report(s)");
+        println!("· {peer} ({machine_id}) disconnected after {seq} report(s)");
     }
     Ok(())
 }
 
+fn register(registry: &Mutex<Registry>, report: &Report, peer: SocketAddr) -> (u64, Vec<String>) {
+    let host = &report.host;
+    let mut reg = registry.lock().unwrap();
+    let mut lines = Vec::new();
+
+    let seen = reg.record(&host.machine_id, &host.hostname, peer.ip());
+    match seen.verdict {
+        Verdict::New => lines.push(format!(
+            "✚ new host: {} ({})",
+            host.hostname, host.machine_id
+        )),
+        Verdict::Known => {}
+        Verdict::Renamed { previous } => lines.push(format!(
+            "~ host {} renamed {previous} → {}",
+            host.machine_id, host.hostname
+        )),
+    }
+
+    if let Some(old) = seen.peer_changed_from {
+        lines.push(format!(
+            "~ host {} moved: peer {old} → {}",
+            host.machine_id,
+            peer.ip()
+        ));
+    }
+
+    let clashes = reg.others_named(&host.hostname, &host.machine_id);
+    if !clashes.is_empty() {
+        lines.push(format!(
+            "! hostname `{}` also used by: {}",
+            host.hostname,
+            clashes.join(", ")
+        ));
+    }
+
+    (seen.reports, lines)
+}
+
 /// Format one report as an indented, human-readable block.
-fn render(peer: &SocketAddr, seq: usize, report: &Report) -> String {
+fn render(peer: &SocketAddr, seq: usize, total: u64, report: &Report) -> String {
     let rule = "─".repeat(64);
     let mut out = String::new();
 
@@ -42,11 +90,14 @@ fn render(peer: &SocketAddr, seq: usize, report: &Report) -> String {
         _ => "unknown".to_string(),
     };
     let _ = writeln!(out, " host       : {}", host.hostname);
+    let _ = writeln!(out, " machine id : {}", host.machine_id);
+    let _ = writeln!(out, " ip         : {} (from tcp peer {peer})", peer.ip());
     let _ = writeln!(out, " os         : {os}");
     if let Some(kernel) = &host.kernel_version {
         let _ = writeln!(out, " kernel     : {kernel}");
     }
     let _ = writeln!(out, " schema     : v{}", report.schema_version);
+    let _ = writeln!(out, " seen       : {total} report(s) from this machine");
     let _ = writeln!(
         out,
         " timestamp  : {} ms since epoch",

@@ -27,6 +27,7 @@ impl Report {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct HostInfo {
+    pub machine_id: String,
     pub hostname: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub os: Option<String>,
