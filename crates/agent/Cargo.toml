@@ -7,6 +7,11 @@ license-file = "../../LICENSE"
 authors = ["Julecko <julecko@dilino.sk>"]
 publish = false
 
+[lib]
+name = "pulse_agent"
+
+# bins: src/bin/pulse-agentd.rs (daemon), src/bin/pulse-agent.rs (front-end)
+
 [dependencies]
 protocol = { path = "../protocol" }
 pulse-config = { path = "../pulse-config" }
@@ -27,7 +32,8 @@ depends = "$auto"
 section = "net"
 priority = "optional"
 assets = [
-    ["target/release/agent", "usr/bin/pulse-agent", "755"],
+    ["target/release/pulse-agentd", "usr/lib/pulse/pulse-agentd", "755"],
+    ["target/release/pulse-agent", "usr/bin/pulse-agent", "755"],
     ["../../packaging/agent.toml", "etc/pulse/agent.toml", "644"],
     ["../../packaging/README.md", "usr/share/doc/pulse-agent/README.md", "644"],
 ]

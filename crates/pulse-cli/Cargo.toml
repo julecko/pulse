@@ -1,0 +1,14 @@
+[package]
+name = "pulse-cli"
+version = "0.1.0"
+edition = "2024"
+description = "shared config & control front-end for the pulse daemons"
+license-file = "../../LICENSE"
+publish = false
+
+[dependencies]
+pulse-config = { path = "../pulse-config" }
+serde = { version = "1.0.229", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+toml_edit = "0.22"

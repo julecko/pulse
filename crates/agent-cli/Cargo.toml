@@ -1,0 +1,16 @@
+[package]
+name = "agent-cli"
+version = "0.1.0"
+edition = "2024"
+description = "pulse-agent — config & control front-end for pulse-agentd"
+license-file = "../../LICENSE"
+authors = ["Julecko <julecko@dilino.sk>"]
+publish = false
+
+[[bin]]
+name = "pulse-agent"
+path = "src/main.rs"
+
+[dependencies]
+pulse-cli = { path = "../pulse-cli" }
+agent = { path = "../agent" }

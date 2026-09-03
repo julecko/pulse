@@ -1,6 +1,11 @@
+//! pulse-serverd internals. The `pulse-serverd` binary is a thin `main` over
+//! [`run`]; the `pulse-server` binary is the (future) config/control front-end.
+
 mod config;
 mod connection;
 mod registry;
+
+pub use config::Config;
 
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -10,9 +15,9 @@ use tracing::{error, info};
 
 use registry::Registry;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> io::Result<()> {
-    let loaded = pulse_config::load::<config::Config>("server").unwrap_or_else(|err| {
+/// Run the server: load config, set up logging, accept connections forever.
+pub async fn run() -> io::Result<()> {
+    let loaded = pulse_config::load::<Config>("server").unwrap_or_else(|err| {
         eprintln!("{err}");
         std::process::exit(1);
     });

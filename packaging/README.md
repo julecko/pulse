@@ -4,16 +4,28 @@
 
 ```sh
 cargo install cargo-deb          # one-time
-packaging/build-deb.sh           # -> target/debian/pulse-{server,agent}_*.deb
 
-sudo apt install ./target/debian/pulse-server_0.1.0-1_amd64.deb
+packaging/build-deb.sh           # both roles
+packaging/build-deb.sh agent     # just pulse-agent  (agentd + agent CLI)
+packaging/build-deb.sh server    # just pulse-server (serverd + server CLI)
+
 sudo apt install ./target/debian/pulse-agent_0.1.0-1_amd64.deb
 ```
 
-Each package installs `/usr/bin/pulse-<app>`, `/etc/pulse/<app>.toml` (a dpkg
-conffile — your edits survive upgrades), and
-`/lib/systemd/system/pulse-<app>.service`. The service is **not** enabled
-automatically:
+The two packages are fully independent — `pulse-agent.deb` has no server binary
+and `pulse-server.deb` has no agent binary. Building one role never compiles the
+other's crates.
+
+Each package installs:
+
+| path | what |
+|---|---|
+| `/usr/lib/pulse/pulse-<app>d` | the daemon — not on `$PATH`, started by systemd only |
+| `/usr/bin/pulse-<app>` | the config/control front-end (what you run) |
+| `/etc/pulse/<app>.toml` | config — a dpkg conffile, survives upgrades |
+| `/usr/lib/systemd/system/pulse-<app>.service` | unit (`ExecStart=/usr/lib/pulse/pulse-<app>d`) |
+
+The service is **not** enabled automatically:
 
 ```sh
 sudoedit /etc/pulse/agent.toml
@@ -21,7 +33,9 @@ sudo systemctl enable --now pulse-agent
 ```
 
 Per-package `[package.metadata.deb]` lives in `crates/server/Cargo.toml` and
-`crates/agent/Cargo.toml`.
+`crates/agent/Cargo.toml`. Use `build-deb.sh` rather than bare `cargo deb -p
+agent` — each package needs a binary from its `*-cli` crate too, which the
+script builds before `cargo deb --no-build`.
 
 ## Install from a build tree (no packaging tools)
 
@@ -32,8 +46,9 @@ sudo packaging/postinstall.sh --enable   # ... and enable --now both services
 ```
 
 `postinstall.sh` is idempotent: existing `/etc/pulse/*.toml` are kept, binaries
-and unit files are overwritten. Runtime dirs are created by systemd on first
-start (`ConfigurationDirectory` / `StateDirectory` / `LogsDirectory` = `pulse`).
+and unit files are overwritten. Daemons go to `/usr/lib/pulse/`, front-ends to
+`/usr/bin/`. Runtime dirs are created by systemd on first start
+(`ConfigurationDirectory` / `StateDirectory` / `LogsDirectory` = `pulse`).
 
 ## Config file location
 
@@ -58,9 +73,29 @@ table (`level`, `file`, `ansi`).
 `RUST_LOG` overrides `log.level` when set. With systemd, stdout is also captured:
 `journalctl -u pulse-agent -f`.
 
+## Crates & binaries
+
+| crate | produces | kind |
+|---|---|---|
+| `protocol` | — | wire format (lib) |
+| `pulse-config` | — | config file loading + logging setup (lib) |
+| `pulse-cli` | — | generic `config`/`systemctl` front-end engine (lib) |
+| `server` | `pulse-serverd` | daemon — thin `main` over `pulse_server::run()` |
+| `agent` | `pulse-agentd` | daemon — thin `main` over `pulse_agent::run()` |
+| `server-cli` | `pulse-server` | front-end — `pulse_cli::run::<pulse_server::Config>()` |
+| `agent-cli` | `pulse-agent` | front-end — `pulse_cli::run::<pulse_agent::Config>()` |
+
+Each `.deb` bundles the daemon + its front-end (`build-deb.sh` builds the whole
+workspace, then `cargo deb --no-build` assembles).
+
+Front-end commands: `config <path|show|check|init|edit|set>`,
+`start|stop|restart|status|enable|disable` (→ `systemctl`), `run` (daemon in the
+foreground).
+
 ## Dev
 
 ```sh
 cp packaging/agent.toml target/debug/agent.toml   # tweak as needed
-cargo run -p agent
+cargo run -p agent                # the daemon
+cargo run -p agent-cli -- config show
 ```

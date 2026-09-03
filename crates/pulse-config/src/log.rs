@@ -13,14 +13,14 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 
 /// Release default log dir; matches `LogsDirectory=pulse` in the systemd units.
 pub const DEFAULT_LOG_DIR: &str = "/var/log/pulse";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     /// `error|warn|info|debug|trace`, or any `RUST_LOG`-style filter string.

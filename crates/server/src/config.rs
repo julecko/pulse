@@ -1,9 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use pulse_config::LogConfig;
 
 /// `server.toml`. See `pulse_config` for where the file is looked up.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Address the TCP listener binds to, e.g. `0.0.0.0:9000`.

@@ -7,6 +7,11 @@ license-file = "../../LICENSE"
 authors = ["Julecko <julecko@dilino.sk>"]
 publish = false
 
+[lib]
+name = "pulse_server"
+
+# bins: src/bin/pulse-serverd.rs (daemon), src/bin/pulse-server.rs (front-end)
+
 [dependencies]
 protocol = { path = "../protocol", features = ["async"] }
 pulse-config = { path = "../pulse-config" }
@@ -27,7 +32,8 @@ depends = "$auto"
 section = "net"
 priority = "optional"
 assets = [
-    ["target/release/server", "usr/bin/pulse-server", "755"],
+    ["target/release/pulse-serverd", "usr/lib/pulse/pulse-serverd", "755"],
+    ["target/release/pulse-server", "usr/bin/pulse-server", "755"],
     ["../../packaging/server.toml", "etc/pulse/server.toml", "644"],
     ["../../packaging/README.md", "usr/share/doc/pulse-server/README.md", "644"],
 ]

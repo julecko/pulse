@@ -8,8 +8,11 @@ strip = true
 [workspace]
 members = [
     "crates/agent",
+    "crates/agent-cli",
     "crates/server",
+    "crates/server-cli",
     "crates/protocol",
     "crates/pulse-config",
+    "crates/pulse-cli",
 ]
 resolver = "3"

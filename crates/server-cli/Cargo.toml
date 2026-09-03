@@ -1,0 +1,16 @@
+[package]
+name = "server-cli"
+version = "0.1.0"
+edition = "2024"
+description = "pulse-server — config & control front-end for pulse-serverd"
+license-file = "../../LICENSE"
+authors = ["Julecko <julecko@dilino.sk>"]
+publish = false
+
+[[bin]]
+name = "pulse-server"
+path = "src/main.rs"
+
+[dependencies]
+pulse-cli = { path = "../pulse-cli" }
+server = { path = "../server" }

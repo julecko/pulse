@@ -27,16 +27,20 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-for bin in server agent; do
+for bin in pulse-serverd pulse-server pulse-agentd pulse-agent; do
     if [ ! -x "$root/target/release/$bin" ]; then
         echo "error: $root/target/release/$bin missing — run 'cargo build --release'" >&2
         exit 1
     fi
 done
 
-echo "==> binaries -> $PREFIX/bin"
-install -Dm755 "$root/target/release/server" "$PREFIX/bin/pulse-server"
-install -Dm755 "$root/target/release/agent"  "$PREFIX/bin/pulse-agent"
+echo "==> daemons -> $PREFIX/lib/pulse"
+install -Dm755 "$root/target/release/pulse-serverd" "$PREFIX/lib/pulse/pulse-serverd"
+install -Dm755 "$root/target/release/pulse-agentd"  "$PREFIX/lib/pulse/pulse-agentd"
+
+echo "==> front-ends -> $PREFIX/bin"
+install -Dm755 "$root/target/release/pulse-server" "$PREFIX/bin/pulse-server"
+install -Dm755 "$root/target/release/pulse-agent"  "$PREFIX/bin/pulse-agent"
 
 echo "==> config -> $CONF_DIR"
 install -d -m755 "$CONF_DIR"

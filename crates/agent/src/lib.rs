@@ -1,14 +1,20 @@
+//! pulse-agentd internals. The `pulse-agentd` binary is a thin `main` over
+//! [`run`]; the `pulse-agent` binary is the (future) config/control front-end.
+
 mod collectors;
 mod config;
 mod host;
 mod transport;
 
+pub use config::Config;
+
 use std::thread;
 
 use tracing::{error, info};
 
-fn main() {
-    let loaded = pulse_config::load::<config::Config>("agent").unwrap_or_else(|err| {
+/// Run the agent: load config, set up logging, then sample and ship forever.
+pub fn run() {
+    let loaded = pulse_config::load::<Config>("agent").unwrap_or_else(|err| {
         eprintln!("{err}");
         std::process::exit(1);
     });
