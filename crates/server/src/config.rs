@@ -29,9 +29,17 @@ pub struct Api {
     /// `[storage] enabled = true` and at least one account
     /// (`pulse-server user add`).
     pub enabled: bool,
-    /// Address the API listener binds to. Keep this on loopback and put a
-    /// TLS-terminating reverse proxy in front for remote access.
+    /// Address the API listener binds to. With `tls = false`, keep this on
+    /// loopback behind a TLS-terminating reverse proxy for remote access.
     pub bind: String,
+    /// Serve the API over HTTPS directly (no proxy needed). Requires a cert +
+    /// key — `pulse-server cert generate-api`, or point `tls_cert`/`tls_key` at
+    /// a CA-issued pair.
+    pub tls: bool,
+    /// PEM certificate chain for `tls`. Empty => `<config dir>/tls/api.crt`.
+    pub tls_cert: String,
+    /// PEM private key for `tls`. Empty => `<config dir>/tls/api.key`.
+    pub tls_key: String,
     /// How long a login session stays valid, in seconds.
     pub session_ttl_secs: u64,
     /// A host counts as "online" if its last report is newer than this many
@@ -59,6 +67,9 @@ impl Default for Api {
         Self {
             enabled: false,
             bind: "127.0.0.1:9100".to_string(),
+            tls: false,
+            tls_cert: String::new(),
+            tls_key: String::new(),
             session_ttl_secs: 7 * 24 * 3600,
             online_secs: 30,
             live_buffer: 256,

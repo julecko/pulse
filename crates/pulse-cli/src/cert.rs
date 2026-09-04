@@ -28,6 +28,7 @@ where
 {
     match action {
         CertCmd::Generate { dns, ip, force } => generate(app, &dns, &ip, force),
+        CertCmd::GenerateApi { dns, ip, force } => generate_api::<C>(app, &dns, &ip, force),
         CertCmd::Fingerprint => {
             println!("{}", fingerprint_of(&own_cert(app))?);
             Ok(ExitCode::SUCCESS)
@@ -89,7 +90,16 @@ fn generate(app: App, dns: &[String], ip: &[String], force: bool) -> Result<Exit
         ));
     }
 
-    let (cert_pem, key_pem) = self_signed(app.role, dns, ip)?;
+    let (cn, mut dns_names) = match app.role {
+        Role::Server => (
+            "pulse-server",
+            vec![pulse_config::tls::PIN_SERVER_NAME.to_string()],
+        ),
+        Role::Agent => ("pulse-agent", Vec::new()),
+    };
+    dns_names.extend(dns.iter().cloned());
+
+    let (cert_pem, key_pem) = self_signed(cn, &dns_names, ip)?;
     write_mode(&cert_path, cert_pem.as_bytes(), 0o644)?;
     write_mode(&key_path, key_pem.as_bytes(), 0o600)?;
     if let Some(user) = app.service_user {
@@ -118,6 +128,52 @@ fn generate(app: App, dns: &[String], ip: &[String], force: bool) -> Result<Exit
             println!("    (trusting the server turns TLS on)");
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Self-signed cert + key for the HTTPS API, written as `tls/api.crt` /
+/// `tls/api.key`, and `[api] tls = true` flipped on. Server-only.
+fn generate_api<C>(app: App, dns: &[String], ip: &[String], force: bool) -> Result<ExitCode, String>
+where
+    C: Serialize + DeserializeOwned + Default,
+{
+    if app.role != Role::Server {
+        return Err("`cert generate-api` is a server command".into());
+    }
+    if dns.is_empty() && ip.is_empty() {
+        return Err("give the address the app connects to: --dns <name> and/or --ip <addr>".into());
+    }
+
+    let dir = app.dir().join("tls");
+    fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    let cert_path = dir.join("api.crt");
+    let key_path = dir.join("api.key");
+    if !force && (cert_path.exists() || key_path.exists()) {
+        return Err(format!(
+            "{} or {} already exists (use --force)",
+            cert_path.display(),
+            key_path.display()
+        ));
+    }
+
+    let (cert_pem, key_pem) = self_signed("pulse-api", dns, ip)?;
+    write_mode(&cert_path, cert_pem.as_bytes(), 0o644)?;
+    write_mode(&key_path, key_pem.as_bytes(), 0o600)?;
+    if let Some(user) = app.service_user {
+        chown_to(&dir, user);
+        chown_to(&cert_path, user);
+        chown_to(&key_path, user);
+    }
+
+    super::apply_sets::<C>(&pulse_config::path(app.name), &[("api.tls", "true")])?;
+
+    println!("wrote {}", cert_path.display());
+    println!("wrote {}  (private key, mode 0600)", key_path.display());
+    println!("fingerprint: {}", fingerprint_of(&cert_path)?);
+    println!("[api] tls enabled — restart the server to apply");
+    println!();
+    println!("this cert is self-signed: pin the fingerprint above in the mobile");
+    println!("app, or replace api.crt / api.key with a CA-issued pair.");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -273,17 +329,11 @@ fn fingerprint_of(cert_path: &Path) -> Result<String, String> {
     Ok(pulse_config::tls::fingerprint(&certs[0]))
 }
 
-/// A self-signed leaf valid from now until ~20 years out. Server certs also
-/// carry SAN `DNS:pulse` (the name the agent's verifier is handed).
-fn self_signed(role: Role, dns: &[String], ip: &[String]) -> Result<(String, String), String> {
-    let mut names = Vec::new();
-    if role == Role::Server {
-        names.push(pulse_config::tls::PIN_SERVER_NAME.to_string());
-    }
-    names.extend(dns.iter().cloned());
-
+/// A self-signed leaf (CN `cn`, SANs `dns` + `ip`) valid from now until ~20
+/// years out. One day of backdating absorbs modest clock skew.
+fn self_signed(cn: &str, dns: &[String], ip: &[String]) -> Result<(String, String), String> {
     let mut params =
-        rcgen::CertificateParams::new(names).map_err(|e| format!("cert params: {e}"))?;
+        rcgen::CertificateParams::new(dns.to_vec()).map_err(|e| format!("cert params: {e}"))?;
     for addr in ip {
         let parsed: std::net::IpAddr = addr
             .parse()
@@ -292,10 +342,6 @@ fn self_signed(role: Role, dns: &[String], ip: &[String]) -> Result<(String, Str
             .subject_alt_names
             .push(rcgen::SanType::IpAddress(parsed));
     }
-    let cn = match role {
-        Role::Server => "pulse-server",
-        Role::Agent => "pulse-agent",
-    };
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, cn);

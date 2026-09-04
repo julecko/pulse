@@ -1,8 +1,8 @@
 //! HTTP API for the pulse app: live host state + queryable history, behind
 //! username/password sessions.
 //!
-//! Runs in-process on its own listener (`[api] bind`). Plaintext — put a
-//! TLS-terminating reverse proxy in front for remote access.
+//! Runs in-process on its own listener (`[api] bind`). Serve it over HTTPS with
+//! `[api] tls = true`, or leave it plaintext behind a TLS-terminating proxy.
 
 mod auth;
 mod downsample;
@@ -10,11 +10,12 @@ mod dto;
 mod routes;
 
 use std::io;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
+use tokio_rustls::rustls::ServerConfig;
 use tracing::info;
 
 use crate::config::Api;
@@ -39,17 +40,45 @@ struct ApiState {
     trust_forwarded_for: bool,
 }
 
-/// Bind `cfg.bind`. Split from [`serve`] so the daemon can fail fast on a bad or
-/// occupied API port instead of only logging it from a background task.
-pub async fn bind(cfg: &Api) -> io::Result<TcpListener> {
-    let listener = TcpListener::bind(&cfg.bind).await?;
-    info!(bind = %cfg.bind, "API listening");
+/// Bind `cfg.bind`. Split from [`serve`] (and kept sync) so a bad/occupied API
+/// port fails the daemon at startup instead of only logging from a spawned task.
+pub fn bind(cfg: &Api) -> io::Result<TcpListener> {
+    let listener = TcpListener::bind(&cfg.bind)?;
+    listener.set_nonblocking(true)?;
+    info!(bind = %cfg.bind, tls = cfg.tls, "API listening");
     Ok(listener)
 }
 
-/// Serve the API on `listener` until the process exits.
+/// Resolve and load the API listener's TLS config, or `None` when
+/// `[api] tls = false`. Called at startup so a missing/bad cert fails fast.
+pub fn load_tls(cfg: &Api) -> io::Result<Option<Arc<ServerConfig>>> {
+    if !cfg.tls {
+        return Ok(None);
+    }
+    let (cert, key) = tls_paths(cfg);
+    let config = pulse_config::tls::api_server_config(&cert, &key).map_err(io::Error::other)?;
+    Ok(Some(config))
+}
+
+fn tls_paths(cfg: &Api) -> (PathBuf, PathBuf) {
+    let dir = pulse_config::tls_dir("server");
+    let pick = |configured: &str, default: &str| {
+        if configured.is_empty() {
+            dir.join(default)
+        } else {
+            PathBuf::from(configured)
+        }
+    };
+    (
+        pick(&cfg.tls_cert, "api.crt"),
+        pick(&cfg.tls_key, "api.key"),
+    )
+}
+
+/// Serve the API on `listener` until the process exits. `tls` from [`load_tls`].
 pub async fn serve(
     listener: TcpListener,
+    tls: Option<Arc<ServerConfig>>,
     cfg: Api,
     store: StoreHandle,
     live: Arc<Live>,
@@ -67,9 +96,15 @@ pub async fn serve(
         login_gate,
         trust_forwarded_for: cfg.trust_forwarded_for,
     };
-    axum::serve(
-        listener,
-        routes::router(state).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
+    let make = routes::router(state).into_make_service_with_connect_info::<SocketAddr>();
+
+    match tls {
+        Some(config) => {
+            let acceptor = axum_server::tls_rustls::RustlsConfig::from_config(config);
+            axum_server::from_tcp_rustls(listener, acceptor)?
+                .serve(make)
+                .await
+        }
+        None => axum_server::from_tcp(listener)?.serve(make).await,
+    }
 }

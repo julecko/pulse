@@ -117,7 +117,9 @@ sudo systemctl restart pulse-server        # and pulse-agent on each agent
 ```
 
 `cert fingerprint` prints this host's own cert hash; `cert revoke <name|fp>`
-removes an approved agent. Enabling `tls` happens automatically on the first
+removes an approved agent. `cert generate-api` (server only) is separate — it
+makes the one-way TLS cert for the **HTTP API** (see "HTTP API" below), not the
+mutual-TLS agent link. Enabling `tls` happens automatically on the first
 `cert trust` (agent) / `cert approve` (server).
 
 Rejection is confirmed: the agent logs `failed to send report … AccessDenied`
@@ -152,10 +154,29 @@ unavailable).
 ## HTTP API (for the pulse app)
 
 `[api] enabled = true` starts a JSON API on `[api] bind` (default
-`127.0.0.1:9100`) with live host state and queryable history. It speaks **plain
-HTTP** — keep it on loopback and put a TLS-terminating reverse proxy
-(nginx/Caddy) in front for remote access. Requires `[storage] enabled` and at
-least one account.
+`127.0.0.1:9100`) with live host state and queryable history. Requires
+`[storage] enabled` and at least one account.
+
+### Transport
+
+Two options for remote access:
+
+- **`[api] tls = true`** — the API serves HTTPS (TLS 1.3) itself, so `bind` can
+  face the internet. Generate a self-signed cert (the mobile app pins its
+  fingerprint):
+
+  ```sh
+  sudo pulse-server cert generate-api --dns pulse.example.com --ip 203.0.113.4
+  sudo systemctl restart pulse-server
+  ```
+
+  or set `[api] tls_cert` / `tls_key` to a CA-issued PEM pair (e.g. from
+  certbot). Empty paths default to `tls/api.crt` and `tls/api.key`. A
+  missing/unreadable cert fails startup.
+
+- **`[api] tls = false`** (default) — plain HTTP; keep `bind` on loopback and put
+  a TLS-terminating reverse proxy (nginx/Caddy) in front. Set
+  `[api] trust_forwarded_for = true` so the login limiter sees real client IPs.
 
 **Accounts** are managed on the server host (never over the API):
 

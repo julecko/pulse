@@ -120,6 +120,18 @@ enum CertCmd {
         #[arg(long)]
         force: bool,
     },
+    /// (server) Generate a self-signed cert for the HTTPS API and enable it.
+    GenerateApi {
+        /// DNS name the app connects to (repeatable).
+        #[arg(long, value_name = "NAME")]
+        dns: Vec<String>,
+        /// IP address the app connects to (repeatable).
+        #[arg(long, value_name = "ADDR")]
+        ip: Vec<String>,
+        /// Overwrite an existing api.crt/api.key.
+        #[arg(long)]
+        force: bool,
+    },
     /// Print the SHA-256 fingerprint of this host's own certificate.
     Fingerprint,
     /// Print this host's own certificate PEM (to hand to the other side).

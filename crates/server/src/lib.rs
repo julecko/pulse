@@ -105,17 +105,30 @@ pub async fn run() -> io::Result<()> {
             Ok(n) => info!(accounts = n, "API accounts loaded"),
             Err(err) => warn!(%err, "could not count API accounts"),
         }
-        // Bind now so a misconfigured/occupied API port fails the daemon
-        // instead of leaving it "healthy" with no API.
-        let api_listener = api::bind(&cfg.api).await.unwrap_or_else(|err| {
+        // Bind + load TLS now so a misconfigured/occupied port or a
+        // missing/bad cert fails the daemon instead of leaving it "healthy"
+        // with no API.
+        let api_listener = api::bind(&cfg.api).unwrap_or_else(|err| {
             eprintln!("api: cannot bind {}: {err}", cfg.api.bind);
             std::process::exit(1);
         });
+        let api_tls = api::load_tls(&cfg.api).unwrap_or_else(|err| {
+            eprintln!("api: tls: {err}");
+            std::process::exit(1);
+        });
+        if api_tls.is_some() {
+            info!("API serving HTTPS");
+        } else {
+            warn!(
+                "API is plaintext HTTP — set [api] tls = true or terminate TLS at a reverse proxy"
+            );
+        }
         let api_cfg = cfg.api.clone();
         let api_store = store.clone();
         let api_live = Arc::clone(&live);
         tokio::spawn(async move {
-            if let Err(err) = api::serve(api_listener, api_cfg, api_store, api_live).await {
+            if let Err(err) = api::serve(api_listener, api_tls, api_cfg, api_store, api_live).await
+            {
                 error!(%err, "API server stopped");
             }
         });

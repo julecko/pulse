@@ -134,6 +134,23 @@ pub fn server_config(
     Ok(Arc::new(config))
 }
 
+/// TLS config for the **public HTTP API** listener: server authentication only
+/// (no client certificate), TLS 1.3, ALPN `h2` + `http/1.1`.
+///
+/// Unlike [`server_config`] this is ordinary one-way TLS — supply a CA-issued
+/// cert, or a self-signed one (`pulse-server cert generate-api`) whose
+/// fingerprint the mobile app pins.
+pub fn api_server_config(cert_path: &Path, key_path: &Path) -> Result<Arc<ServerConfig>, Error> {
+    let certs = load_certs(cert_path)?;
+    let key = load_key(key_path)?;
+    let mut config = ServerConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(Arc::new(config))
+}
+
 /// Agent side: TLS 1.3, pins the server cert in `server_cert`, and presents
 /// `cert_path`/`key_path` as its client identity.
 pub fn pinned_client_config(

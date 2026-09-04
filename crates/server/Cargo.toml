@@ -16,6 +16,7 @@ name = "pulse_server"
 argon2 = "0.5"
 async-stream = "0.3"
 axum = "0.8"
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 getrandom = "0.2"
 protocol = { path = "../protocol", features = ["async"] }
 pulse-config = { path = "../pulse-config" }
