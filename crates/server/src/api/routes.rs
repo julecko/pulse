@@ -31,6 +31,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/v1/hosts/{machine_id}", get(host))
         .route("/api/v1/hosts/{machine_id}/history", get(history))
         .route("/api/v1/hosts/{machine_id}/reports", get(reports))
+        .route("/api/v1/hosts/{machine_id}/events", get(events))
         .route("/api/v1/live", get(live))
         .with_state(state)
 }
@@ -148,6 +149,22 @@ async fn reports(
         .recent_reports(machine_id, from_ms, to_ms, limit)
         .await?;
     Ok(Json(reports))
+}
+
+async fn events(
+    _s: Session,
+    State(st): State<ApiState>,
+    Path(machine_id): Path<String>,
+    Query(q): Query<RangeQuery>,
+) -> Result<Json<Vec<crate::store::EventRow>>, ApiError> {
+    if !st.store.host_exists(machine_id.clone()).await? {
+        return Err(ApiError::not_found("unknown host"));
+    }
+    let (from_ms, to_ms) = q.window()?;
+    let limit = q.limit.unwrap_or(1000).clamp(1, MAX_REPORTS);
+    Ok(Json(
+        st.store.events(machine_id, from_ms, to_ms, limit).await?,
+    ))
 }
 
 async fn live(_s: Session, State(st): State<ApiState>) -> impl IntoResponse {

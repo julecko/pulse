@@ -58,6 +58,7 @@ pub fn run() {
         match sender.send(&report) {
             Ok(()) => info!(
                 sections = report.metrics.section_count(),
+                events = report.events.len(),
                 host = %report.host.hostname,
                 "report sent"
             ),

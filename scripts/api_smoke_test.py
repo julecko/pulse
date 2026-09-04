@@ -162,6 +162,8 @@ def main():
     # 2. protected route rejects no token
     status, _ = request("GET", f"{base}/hosts")
     r.check("GET /hosts without token is 401", status == 401, f"got {status}")
+    status, _ = request("GET", f"{base}/hosts/example/events")
+    r.check("GET /events without token is 401", status == 401, f"got {status}")
 
     # 3. login with wrong password
     status, _ = request("POST", f"{base}/login",
@@ -196,6 +198,8 @@ def main():
         r.check("GET /hosts/{id} is 200", status == 200, f"got {status}")
         r.check("/hosts/{id} has a full report",
                 isinstance(detail, dict) and "report" in detail and "metrics" in detail["report"])
+        r.check("/hosts/{id} report has an events list",
+                isinstance(detail, dict) and isinstance(detail.get("report", {}).get("events"), list))
         show(f"GET /hosts/{mid}", detail)
 
         now = int(time.time() * 1000)
@@ -213,7 +217,41 @@ def main():
                                f"{base}/hosts/{mid}/reports?from={frm}&to={now}&limit=5", token=token)
         r.check("GET /hosts/{id}/reports is 200", status == 200, f"got {status}")
         r.check("reports is a list of <= 5", isinstance(reps, list) and len(reps) <= 5)
+        r.check("reports expose events lists",
+                isinstance(reps, list) and all(isinstance(item.get("events"), list)
+                                               for item in reps if isinstance(item, dict)))
         show(f"GET /hosts/{mid}/reports", reps)
+
+        status, stored_events = request(
+            "GET",
+            f"{base}/hosts/{mid}/events?from=0&to={int(time.time() * 1000) + 1000}&limit=5",
+            token=token,
+        )
+        ok = r.check("GET /hosts/{id}/events is 200", status == 200, f"got {status}")
+        r.check(
+            "event history returns stored event records",
+            ok and isinstance(stored_events, list),
+        )
+        if isinstance(stored_events, list) and stored_events:
+            sample = stored_events[0]
+            r.check("event record has id", isinstance(sample, dict) and isinstance(sample.get("id"), int))
+            r.check("event record has host and timestamps",
+                    isinstance(sample, dict)
+                    and sample.get("machine_id") == mid
+                    and isinstance(sample.get("timestamp_unix_ms"), int)
+                    and isinstance(sample.get("received_unix_ms"), int))
+            r.check("event record has typed event payload",
+                    isinstance(sample, dict) and isinstance(sample.get("event"), dict))
+        show(f"GET /hosts/{mid}/events", stored_events)
+
+        status, _ = request("POST", f"{base}/hosts/{mid}/events", token=token,
+                            body={"event": {"Custom": {
+                                "name": "must-not-be-accepted",
+                                "message": "events enter through reports only",
+                                "fields": {},
+                            }}})
+        r.check("POST /events is rejected (report-only ingestion)", status == 405,
+                f"got {status}")
 
         status, notfound = request("GET", f"{base}/hosts/does-not-exist", token=token)
         r.check("GET /hosts/<unknown> is 404", status == 404, f"got {status}")
@@ -227,6 +265,8 @@ def main():
         if events:
             r.check("live event looks like a report",
                     isinstance(events[0], dict) and "metrics" in events[0])
+            r.check("live event has an events list",
+                    isinstance(events[0], dict) and isinstance(events[0].get("events"), list))
             show("GET /live (first event)", events[0])
 
         # SSE via ?token= query param (what a browser EventSource would use)

@@ -60,6 +60,7 @@ where
             cpu_pct = ?m.cpu.as_ref().map(|c| c.global_usage_percent),
             mem_used_bytes = ?m.memory.as_ref().map(|mem| mem.used_bytes),
             disks = m.disks.len(),
+            events = report.events.len(),
             "report received"
         );
 

@@ -214,7 +214,12 @@ source IP.
 | GET  | `/api/v1/hosts/{machine_id}` | host detail + latest full report |
 | GET  | `/api/v1/hosts/{machine_id}/history?from=&to=&bucket=` | downsampled series for charts (ms; `bucket` auto-picked) |
 | GET  | `/api/v1/hosts/{machine_id}/reports?from=&to=&limit=` | raw full reports |
+| GET  | `/api/v1/hosts/{machine_id}/events?from=&to=&limit=` | query stored operational events |
 | GET  | `/api/v1/live` | SSE stream — snapshot then one event per new report |
+Events can only enter the system as part of an incoming `Report` from
+`pulse-agent report` or another protocol client. The API only presents them:
+`GET /events` returns dedicated event records, while `/reports`, host detail,
+and `/live` return the complete report containing its events.
 
 `scripts/api_smoke_test.py` (stdlib only) exercises the whole surface:
 
@@ -243,7 +248,29 @@ startup.
 The server's full per-report device dump (host / CPU per-core / memory / disks /
 load) is printed to the **terminal in debug builds only**. Release builds emit
 just a one-line structured `report received` event (host, machine id, cpu %,
-mem, disk count) to the log.
+mem, disk count and attached event count) to the log.
+
+## Reports and event types
+
+The agent-to-server protocol sends a `Report` envelope. Every report keeps the
+existing `metrics` object, and may also contain zero or more typed `events`.
+This means a normal system sample can be sent together with operational
+observations without changing the metrics charts or history queries.
+
+Supported event types are:
+
+| type | fields | example use |
+|---|---|---|
+| `SshLogin` | `username`, `source`, `success`, `auth_method` | accepted or rejected SSH login |
+| `Warning` | `code`, `message`, optional `details` | disk, service or certificate warning |
+| `Custom` | `name`, `message`, string `fields` map | application-specific event |
+
+Events use the same MessagePack framing, validation and size limit as metrics.
+They are persisted in the report `body` blob, returned by the raw reports and
+host-detail API endpoints, and delivered through the live SSE stream. The
+SQLite summary columns intentionally remain metrics-only because chart
+downsampling operates on those columns; event consumers should use the full
+report endpoints or live stream.
 
 ## Crates & binaries
 
@@ -263,7 +290,23 @@ workspace, then `cargo deb --no-build` assembles).
 Front-end commands: `config <path|show|check|init|edit|set>`, `cert <…>`,
 `start|stop|restart|status|enable|disable` (→ `systemctl`), `run` (daemon in the
 foreground). `pulse-server` also has `user <add|list|passwd|rm>` for API
-accounts.
+accounts. `pulse-agent` also has a one-shot `report` command for sending
+operational events without affecting the daemon:
+
+```sh
+pulse-agent report ssh-login --username alice --source 203.0.113.8 \
+  --auth-method publickey --outcome success
+pulse-agent report warning --code disk-nearly-full \
+  --message "Less than 10% space remains"
+pulse-agent report custom --name deployment --message "version changed" \
+  --field version=1.2.3
+```
+
+This command loads the normal agent config and TLS material, sends one report,
+then exits. It does not start or communicate with `pulse-agentd`, so it is
+suitable for PAM or other hooks. For example, a PAM hook can call
+`pulse-agent report ssh-login` with the login variables supplied by the
+integration. Use `--outcome failure` for rejected logins.
 
 ## Dev
 

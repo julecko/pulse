@@ -11,7 +11,7 @@ pub use frame::{ProtocolError, decode_body, encode, encode_body, read_report, wr
 #[cfg(feature = "async")]
 pub use frame::{read_report_async, write_report_async};
 pub use metrics::{CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics};
-pub use report::{HostInfo, Report};
+pub use report::{CustomEvent, HostInfo, Report, ReportEvent, SshLogin, Warning};
 
 /// Bumped whenever [`Report`] changes shape in a non-additive way.
 pub const SCHEMA_VERSION: u16 = 1;

@@ -7,13 +7,13 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Mutex;
 
-use protocol::Report;
+use protocol::{Report, ReportEvent};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{Bucket, HostRow, Store, StoreError, UserRow};
 
 /// Bump when `SCHEMA` changes shape. A DB written by a newer binary is refused.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_machine_ts ON reports (machine_id, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_reports_recv       ON reports (recv_ms);
+
+CREATE TABLE IF NOT EXISTS events (
+  id             INTEGER PRIMARY KEY,
+  machine_id     TEXT NOT NULL REFERENCES hosts(machine_id) ON DELETE CASCADE,
+  ts_ms          INTEGER NOT NULL,
+  recv_ms        INTEGER NOT NULL,
+  event_index    INTEGER NOT NULL,
+  event_type     TEXT NOT NULL,
+  body           BLOB NOT NULL,
+  UNIQUE (machine_id, ts_ms, event_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_machine_ts ON events (machine_id, ts_ms);
 
 CREATE TABLE IF NOT EXISTS users (
   name       TEXT PRIMARY KEY,
@@ -118,6 +131,12 @@ impl SqliteStore {
                     supported: SCHEMA_VERSION,
                 });
             }
+            Some(v) if v < SCHEMA_VERSION => {
+                conn.execute(
+                    "UPDATE meta SET v = ?1 WHERE k = 'schema_version'",
+                    params![SCHEMA_VERSION.to_string()],
+                )?;
+            }
             Some(_) => {}
         }
 
@@ -175,7 +194,7 @@ impl Store for SqliteStore {
                 peer.to_string(),
             ],
         )?;
-        tx.execute(
+        let inserted = tx.execute(
             "INSERT INTO reports
                (machine_id, ts_ms, recv_ms, schema_version,
                 cpu_pct, mem_used, mem_total, swap_used, swap_total,
@@ -199,6 +218,30 @@ impl Store for SqliteStore {
                 body,
             ],
         )?;
+        if inserted == 1 {
+            for (event_index, event) in report.events.iter().enumerate() {
+                let event_type = match event {
+                    ReportEvent::SshLogin(_) => "ssh_login",
+                    ReportEvent::Warning(_) => "warning",
+                    ReportEvent::Custom(_) => "custom",
+                };
+                let event_body = rmp_serde::to_vec_named(event)
+                    .map_err(|err| StoreError::Codec(protocol::ProtocolError::Encode(err)))?;
+                tx.execute(
+                    "INSERT INTO events
+                       (machine_id, ts_ms, recv_ms, event_index, event_type, body)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        h.machine_id,
+                        report.timestamp_unix_ms as i64,
+                        recv_ms as i64,
+                        event_index as i64,
+                        event_type,
+                        event_body,
+                    ],
+                )?;
+            }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -316,6 +359,44 @@ impl Store for SqliteStore {
         Ok(reports)
     }
 
+    fn events(
+        &self,
+        machine_id: &str,
+        from_ms: u64,
+        to_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<super::EventRow>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts_ms, recv_ms, body FROM events
+             WHERE machine_id = ?1 AND ts_ms >= ?2 AND ts_ms < ?3
+             ORDER BY ts_ms DESC, event_index DESC LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(
+            params![machine_id, from_ms as i64, to_ms as i64, limit as i64],
+            |row| {
+                let body: Vec<u8> = row.get(3)?;
+                let event = rmp_serde::from_slice(&body).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        body.len(),
+                        rusqlite::types::Type::Blob,
+                        Box::new(err),
+                    )
+                })?;
+                Ok(super::EventRow {
+                    id: row.get::<_, i64>(0)? as u64,
+                    machine_id: machine_id.to_string(),
+                    timestamp_unix_ms: row.get::<_, i64>(1)? as u64,
+                    received_unix_ms: row.get::<_, i64>(2)? as u64,
+                    event,
+                })
+            },
+        )?;
+        let mut events = rows.collect::<Result<Vec<_>, _>>()?;
+        events.reverse();
+        Ok(events)
+    }
+
     fn prune(&self, cutoff_recv_ms: u64) -> Result<u64, StoreError> {
         let conn = self.conn.lock().unwrap();
         let removed = conn.execute(
@@ -429,7 +510,9 @@ impl Store for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{CpuInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, Report};
+    use protocol::{
+        CpuInfo, CustomEvent, HostInfo, LinuxInfo, MemoryInfo, Metrics, Report, ReportEvent,
+    };
     use std::net::Ipv4Addr;
 
     fn report(machine_id: &str, hostname: &str, ts_ms: u64, cpu: f32) -> Report {
@@ -480,7 +563,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(v, "1");
+        assert_eq!(v, "2");
     }
 
     #[test]
@@ -514,6 +597,30 @@ mod tests {
         assert_eq!(s.list_hosts().unwrap()[0].report_count, 1);
         let latest = s.latest_for("m1").unwrap().unwrap();
         assert_eq!(latest.metrics.cpu.unwrap().global_usage_percent, 10.0);
+    }
+
+    #[test]
+    fn events_are_stored_and_queryable() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        let report = report("m1", "a", 1_000, 10.0).with_events(vec![
+            ReportEvent::Custom(CustomEvent {
+                name: "deploy".into(),
+                message: "completed".into(),
+                fields: [("version".into(), "1.2.3".into())].into_iter().collect(),
+            }),
+            ReportEvent::Warning(protocol::Warning {
+                code: "disk".into(),
+                message: "nearly full".into(),
+                details: None,
+            }),
+        ]);
+        s.insert_report(&report, 1_001, peer()).unwrap();
+
+        let events = s.events("m1", 0, 2_000, 10).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].timestamp_unix_ms, 1_000);
+        assert!(matches!(events[0].event, ReportEvent::Custom(_)));
+        assert!(matches!(events[1].event, ReportEvent::Warning(_)));
     }
 
     #[test]

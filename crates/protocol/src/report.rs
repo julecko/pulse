@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{MAX_IDENT_LEN, SCHEMA_VERSION, metrics::Metrics};
@@ -8,6 +10,11 @@ pub struct Report {
     pub host: HostInfo,
     pub timestamp_unix_ms: u64,
     pub metrics: Metrics,
+    /// Typed non-metric observations attached to this report. Keeping these
+    /// alongside `metrics` preserves the existing metrics API while allowing
+    /// agents to send operational events in the same framed message.
+    #[serde(default)]
+    pub events: Vec<ReportEvent>,
 }
 
 impl Report {
@@ -21,7 +28,13 @@ impl Report {
             host,
             timestamp_unix_ms,
             metrics,
+            events: Vec::new(),
         }
+    }
+
+    pub fn with_events(mut self, events: Vec<ReportEvent>) -> Self {
+        self.events = events;
+        self
     }
 
     /// Sanity-check the host identity a peer sent before it is registered,
@@ -56,8 +69,105 @@ impl Report {
                 });
             }
         }
+        for event in &self.events {
+            event.validate()?;
+        }
         Ok(())
     }
+}
+
+/// A non-metric observation carried by a [`Report`].
+///
+/// Variants are deliberately explicit for data that consumers can act on.
+/// `Custom` is the escape hatch for integrations that need a small structured
+/// event before a first-class variant exists.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ReportEvent {
+    SshLogin(SshLogin),
+    Warning(Warning),
+    Custom(CustomEvent),
+}
+
+impl ReportEvent {
+    fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::SshLogin(event) => {
+                validate_text("ssh username", &event.username)?;
+                validate_text("ssh source", &event.source)?;
+                validate_text("ssh auth method", &event.auth_method)?;
+            }
+            Self::Warning(event) => {
+                validate_text("warning code", &event.code)?;
+                validate_text("warning message", &event.message)?;
+                if let Some(details) = &event.details {
+                    validate_text("warning details", details)?;
+                }
+            }
+            Self::Custom(event) => {
+                validate_text("custom event name", &event.name)?;
+                validate_text("custom event message", &event.message)?;
+                for (key, value) in &event.fields {
+                    validate_text("custom event field", key)?;
+                    validate_text("custom event field", value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SshLogin {
+    pub username: String,
+    pub source: String,
+    pub success: bool,
+    pub auth_method: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Warning {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub details: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CustomEvent {
+    pub name: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub fields: BTreeMap<String, String>,
+}
+
+fn validate_text(name: &'static str, value: &str) -> Result<(), &'static str> {
+    if value.len() > MAX_IDENT_LEN {
+        return Err(match name {
+            "ssh username" => "ssh username too long",
+            "ssh source" => "ssh source too long",
+            "ssh auth method" => "ssh auth method too long",
+            "warning code" => "warning code too long",
+            "warning message" => "warning message too long",
+            "warning details" => "warning details too long",
+            "custom event name" => "custom event name too long",
+            "custom event message" => "custom event message too long",
+            _ => "custom event field too long",
+        });
+    }
+    if value.contains(|c: char| c.is_control()) {
+        return Err(match name {
+            "ssh username" => "ssh username has control characters",
+            "ssh source" => "ssh source has control characters",
+            "ssh auth method" => "ssh auth method has control characters",
+            "warning code" => "warning code has control characters",
+            "warning message" => "warning message has control characters",
+            "warning details" => "warning details has control characters",
+            "custom event name" => "custom event name has control characters",
+            "custom event message" => "custom event message has control characters",
+            _ => "custom event field has control characters",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -75,7 +185,7 @@ pub struct HostInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MAX_IDENT_LEN, Metrics};
+    use crate::{CustomEvent, MAX_IDENT_LEN, Metrics, ReportEvent, SshLogin, Warning};
 
     fn report_with(host: HostInfo) -> Report {
         Report::new(host, Metrics::default())
@@ -114,5 +224,36 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(ctrl.validate(), Err("hostname has control characters"));
+    }
+
+    #[test]
+    fn report_supports_typed_events() {
+        let report = report_with(HostInfo {
+            machine_id: "m".into(),
+            hostname: "h".into(),
+            ..Default::default()
+        })
+        .with_events(vec![
+            ReportEvent::SshLogin(SshLogin {
+                username: "alice".into(),
+                source: "192.0.2.10".into(),
+                success: true,
+                auth_method: "publickey".into(),
+            }),
+            ReportEvent::Warning(Warning {
+                code: "disk-nearly-full".into(),
+                message: "Less than 10% space remains".into(),
+                details: None,
+            }),
+            ReportEvent::Custom(CustomEvent {
+                name: "deployment".into(),
+                message: "version changed".into(),
+                fields: [("version".into(), "1.2.3".into())].into_iter().collect(),
+            }),
+        ]);
+
+        assert!(report.validate().is_ok());
+        let decoded = crate::decode_body(&crate::encode_body(&report).unwrap()).unwrap();
+        assert_eq!(decoded.events, report.events);
     }
 }

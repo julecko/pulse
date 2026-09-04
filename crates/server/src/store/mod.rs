@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use protocol::Report;
+use protocol::{Report, ReportEvent};
 use serde::Serialize;
 
 pub use sqlite::SqliteStore;
@@ -81,6 +81,15 @@ pub struct UserRow {
     pub created_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct EventRow {
+    pub id: u64,
+    pub machine_id: String,
+    pub timestamp_unix_ms: u64,
+    pub received_unix_ms: u64,
+    pub event: ReportEvent,
+}
+
 /// Blocking storage backend.
 pub trait Store: Send + Sync + 'static {
     // --- metrics history ---
@@ -118,6 +127,14 @@ pub trait Store: Send + Sync + 'static {
         to_ms: u64,
         limit: usize,
     ) -> Result<Vec<Report>, StoreError>;
+
+    fn events(
+        &self,
+        machine_id: &str,
+        from_ms: u64,
+        to_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError>;
 
     /// Delete report rows received before `cutoff_recv_ms`. Returns rows removed.
     fn prune(&self, cutoff_recv_ms: u64) -> Result<u64, StoreError>;
@@ -179,6 +196,9 @@ impl Store for NoopStore {
         Ok(Vec::new())
     }
     fn recent_reports(&self, _: &str, _: u64, _: u64, _: usize) -> Result<Vec<Report>, StoreError> {
+        Ok(Vec::new())
+    }
+    fn events(&self, _: &str, _: u64, _: u64, _: usize) -> Result<Vec<EventRow>, StoreError> {
         Ok(Vec::new())
     }
     fn prune(&self, _: u64) -> Result<u64, StoreError> {
@@ -309,6 +329,18 @@ impl StoreHandle {
             inner.recent_reports(&machine_id, from_ms, to_ms, limit)
         })
         .await?
+    }
+
+    pub async fn events(
+        &self,
+        machine_id: String,
+        from_ms: u64,
+        to_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.events(&machine_id, from_ms, to_ms, limit))
+            .await?
     }
 
     pub async fn user_hash(&self, name: String) -> Result<Option<String>, StoreError> {

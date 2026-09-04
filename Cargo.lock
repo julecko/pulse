@@ -19,7 +19,12 @@ name = "agent-cli"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "clap",
+ "protocol",
  "pulse-cli",
+ "pulse-config",
+ "rustls",
+ "sysinfo",
 ]
 
 [[package]]
@@ -1090,6 +1095,7 @@ dependencies = [
  "getrandom",
  "protocol",
  "pulse-config",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",
