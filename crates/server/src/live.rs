@@ -27,11 +27,21 @@ impl Live {
 
     /// Record a freshly received report and fan it out to SSE subscribers.
     /// `broadcast::send` never blocks; an error only means nobody is listening.
+    ///
+    /// A report that is older than the one already cached for this machine
+    /// (out-of-order or delayed delivery) is dropped, so the "latest" view never
+    /// regresses to a stale sample.
     pub fn publish(&self, report: Arc<Report>) {
-        self.latest
-            .lock()
-            .unwrap()
-            .insert(report.host.machine_id.clone(), Arc::clone(&report));
+        {
+            let mut latest = self.latest.lock().unwrap();
+            if latest
+                .get(&report.host.machine_id)
+                .is_some_and(|prev| prev.timestamp_unix_ms > report.timestamp_unix_ms)
+            {
+                return;
+            }
+            latest.insert(report.host.machine_id.clone(), Arc::clone(&report));
+        }
         let _ = self.tx.send(report);
     }
 
@@ -83,6 +93,16 @@ mod tests {
         live.publish(Arc::new(report("m2", 5)));
         assert_eq!(live.latest_one("m1").unwrap().timestamp_unix_ms, 2);
         assert_eq!(live.latest().len(), 2);
+    }
+
+    #[test]
+    fn publish_ignores_older_samples() {
+        let live = Live::new(16);
+        live.publish(Arc::new(report("m1", 10)));
+        live.publish(Arc::new(report("m1", 5))); // delayed / out of order
+        assert_eq!(live.latest_one("m1").unwrap().timestamp_unix_ms, 10);
+        live.publish(Arc::new(report("m1", 10))); // equal ts still refreshes
+        assert_eq!(live.latest_one("m1").unwrap().timestamp_unix_ms, 10);
     }
 
     #[tokio::test]

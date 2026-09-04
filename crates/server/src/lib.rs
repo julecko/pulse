@@ -105,11 +105,17 @@ pub async fn run() -> io::Result<()> {
             Ok(n) => info!(accounts = n, "API accounts loaded"),
             Err(err) => warn!(%err, "could not count API accounts"),
         }
+        // Bind now so a misconfigured/occupied API port fails the daemon
+        // instead of leaving it "healthy" with no API.
+        let api_listener = api::bind(&cfg.api).await.unwrap_or_else(|err| {
+            eprintln!("api: cannot bind {}: {err}", cfg.api.bind);
+            std::process::exit(1);
+        });
         let api_cfg = cfg.api.clone();
         let api_store = store.clone();
         let api_live = Arc::clone(&live);
         tokio::spawn(async move {
-            if let Err(err) = api::serve(api_cfg, api_store, api_live).await {
+            if let Err(err) = api::serve(api_listener, api_cfg, api_store, api_live).await {
                 error!(%err, "API server stopped");
             }
         });
@@ -230,7 +236,9 @@ async fn serve<S>(
 /// older than the retention window. `tokio::time::interval` fires immediately,
 /// so a stale DB is trimmed at startup.
 fn spawn_pruner(store: StoreHandle, storage: &config::Storage) {
-    let retention_ms = storage.retention_days as u64 * 86_400_000;
+    // `max(1)` so `retention_days = 0` doesn't degenerate into "delete everything
+    // older than now"; `saturating_mul` guards the (already generous) u64 range.
+    let retention_ms = (storage.retention_days.max(1) as u64).saturating_mul(86_400_000);
     let period = Duration::from_secs(storage.prune_interval_secs.max(60));
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);

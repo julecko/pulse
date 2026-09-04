@@ -13,6 +13,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tracing::info;
 
@@ -20,6 +21,10 @@ use crate::config::Api;
 use crate::limits::RateLimiter;
 use crate::live::Live;
 use crate::store::StoreHandle;
+
+/// Upper bound for `session_ttl_secs` (~10 years) — keeps expiry arithmetic well
+/// clear of `u64` overflow and rejects nonsensical config.
+const MAX_SESSION_TTL_SECS: u64 = 10 * 365 * 24 * 3600;
 
 #[derive(Clone)]
 struct ApiState {
@@ -34,9 +39,21 @@ struct ApiState {
     trust_forwarded_for: bool,
 }
 
-/// Bind `cfg.bind` and serve the API until the process exits. Returns on a bind
-/// error (the caller logs and continues — the ingest listener is independent).
-pub async fn serve(cfg: Api, store: StoreHandle, live: Arc<Live>) -> io::Result<()> {
+/// Bind `cfg.bind`. Split from [`serve`] so the daemon can fail fast on a bad or
+/// occupied API port instead of only logging it from a background task.
+pub async fn bind(cfg: &Api) -> io::Result<TcpListener> {
+    let listener = TcpListener::bind(&cfg.bind).await?;
+    info!(bind = %cfg.bind, "API listening");
+    Ok(listener)
+}
+
+/// Serve the API on `listener` until the process exits.
+pub async fn serve(
+    listener: TcpListener,
+    cfg: Api,
+    store: StoreHandle,
+    live: Arc<Live>,
+) -> io::Result<()> {
     let login_gate = Arc::new(Semaphore::new(match cfg.login_max_concurrent {
         0 => Semaphore::MAX_PERMITS,
         n => n,
@@ -44,14 +61,12 @@ pub async fn serve(cfg: Api, store: StoreHandle, live: Arc<Live>) -> io::Result<
     let state = ApiState {
         store,
         live,
-        session_ttl_secs: cfg.session_ttl_secs.max(60),
+        session_ttl_secs: cfg.session_ttl_secs.clamp(60, MAX_SESSION_TTL_SECS),
         online_secs: cfg.online_secs,
         login_rate: Arc::new(RateLimiter::new(cfg.login_per_ip_per_minute)),
         login_gate,
         trust_forwarded_for: cfg.trust_forwarded_for,
     };
-    let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
-    info!(bind = %cfg.bind, "API listening");
     axum::serve(
         listener,
         routes::router(state).into_make_service_with_connect_info::<SocketAddr>(),

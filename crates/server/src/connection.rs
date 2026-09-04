@@ -11,6 +11,10 @@ use crate::live::Live;
 use crate::registry::{Registry, Verdict};
 use crate::store::{StoreHandle, now_unix_ms};
 
+/// Drop a connection after this many rejected (malformed-identity) reports, so a
+/// hostile peer can't keep a slot busy spraying junk within the timeout window.
+const MAX_REJECTS: usize = 16;
+
 #[tracing::instrument(skip_all, fields(peer = %peer))]
 pub async fn handle<S>(
     stream: S,
@@ -26,7 +30,20 @@ where
 
     let mut seq = 0usize;
     let mut machine_id = String::new();
+    let mut rejected = 0usize;
     while let Some(report) = protocol::read_report_async(&mut reader).await? {
+        if let Err(reason) = report.validate() {
+            rejected += 1;
+            warn!(reason, "rejecting report with invalid host identity");
+            if rejected >= MAX_REJECTS {
+                warn!(
+                    rejects = rejected,
+                    "too many invalid reports — closing connection"
+                );
+                break;
+            }
+            continue;
+        }
         let recv_ms = now_unix_ms();
         seq += 1;
         machine_id = report.host.machine_id.clone();
@@ -209,17 +226,14 @@ fn render(peer: &SocketAddr, seq: usize, total: u64, report: &Report) -> String 
         }
     }
 
-    match &m.linux {
-        Some(lx) => {
-            let _ = writeln!(out, "\n linux");
-            let _ = writeln!(
-                out,
-                "   load avg : {:.2}  {:.2}  {:.2}   (1 / 5 / 15 min)",
-                lx.load_avg_one, lx.load_avg_five, lx.load_avg_fifteen,
-            );
-            let _ = writeln!(out, "   uptime   : {}", human_duration(lx.uptime_secs));
-        }
-        None => {}
+    if let Some(lx) = &m.linux {
+        let _ = writeln!(out, "\n linux");
+        let _ = writeln!(
+            out,
+            "   load avg : {:.2}  {:.2}  {:.2}   (1 / 5 / 15 min)",
+            lx.load_avg_one, lx.load_avg_five, lx.load_avg_fifteen,
+        );
+        let _ = writeln!(out, "   uptime   : {}", human_duration(lx.uptime_secs));
     }
 
     let _ = writeln!(out, "{rule}");

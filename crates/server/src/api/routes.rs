@@ -111,6 +111,9 @@ async fn history(
     Path(machine_id): Path<String>,
     Query(q): Query<RangeQuery>,
 ) -> Result<Json<History>, ApiError> {
+    if !st.store.host_exists(machine_id.clone()).await? {
+        return Err(ApiError::not_found("unknown host"));
+    }
     let (from_ms, to_ms) = q.window()?;
     let bucket_ms = q
         .bucket
@@ -135,6 +138,9 @@ async fn reports(
     Path(machine_id): Path<String>,
     Query(q): Query<RangeQuery>,
 ) -> Result<Json<Vec<Report>>, ApiError> {
+    if !st.store.host_exists(machine_id.clone()).await? {
+        return Err(ApiError::not_found("unknown host"));
+    }
     let (from_ms, to_ms) = q.window()?;
     let limit = q.limit.unwrap_or(1000).clamp(1, MAX_REPORTS);
     let reports = st

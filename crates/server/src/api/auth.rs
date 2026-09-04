@@ -103,7 +103,7 @@ pub async fn login(
     getrandom::getrandom(&mut raw).map_err(ApiError::internal)?;
     let token = hex(&raw);
     let now = now_unix_ms();
-    let expires_at_ms = now + st.session_ttl_secs * 1000;
+    let expires_at_ms = now.saturating_add(st.session_ttl_secs.saturating_mul(1000));
     st.store
         .create_session(
             sha256_hex(token.as_bytes()),

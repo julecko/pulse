@@ -4,7 +4,7 @@
 # host:port of the pulse server to ship reports to.
 server = "127.0.0.1:9000"
 
-# How often to collect and send a report, in seconds.
+# How often to collect and send a report, in seconds (minimum 1).
 interval_secs = 5
 
 # Mutual TLS 1.3. Set by `pulse-agent cert generate` + `cert trust`; leave false

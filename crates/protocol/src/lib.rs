@@ -18,3 +18,8 @@ pub const SCHEMA_VERSION: u16 = 1;
 
 /// Largest message we are willing to buffer from a peer (16 MiB).
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+
+/// Upper bound on any single host identity string (`machine_id`, `hostname`,
+/// `os`, …). Generous — real values are well under 100 bytes — but enough to
+/// stop a peer bloating the registry, logs and DB with multi-MB fields.
+pub const MAX_IDENT_LEN: usize = 256;

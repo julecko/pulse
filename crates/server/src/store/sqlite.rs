@@ -228,6 +228,18 @@ impl Store for SqliteStore {
         rows.collect::<Result<_, _>>().map_err(Into::into)
     }
 
+    fn host_exists(&self, machine_id: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM hosts WHERE machine_id = ?1",
+                params![machine_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     fn latest_per_host(&self) -> Result<Vec<Report>, StoreError> {
         let conn = self.conn.lock().unwrap();
         decode_reports(
@@ -483,6 +495,8 @@ mod tests {
 
         let hosts = s.list_hosts().unwrap();
         assert_eq!(hosts.len(), 2);
+        assert!(s.host_exists("m1").unwrap());
+        assert!(!s.host_exists("nope").unwrap());
         let m1 = hosts.iter().find(|h| h.machine_id == "m1").unwrap();
         assert_eq!(m1.hostname, "alpha2"); // last write wins
         assert_eq!(m1.report_count, 2);

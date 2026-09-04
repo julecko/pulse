@@ -32,6 +32,13 @@ pub fn run() {
     } else {
         info!(path = %loaded.path.display(), "no config file, using defaults");
     }
+    if cfg.interval_secs < config::MIN_INTERVAL_SECS {
+        warn!(
+            configured = cfg.interval_secs,
+            using = config::MIN_INTERVAL_SECS,
+            "interval_secs too low — clamping to the minimum"
+        );
+    }
     let sender = Sender::from_config(&cfg).unwrap_or_else(|err| {
         eprintln!("tls: {err}");
         std::process::exit(1);

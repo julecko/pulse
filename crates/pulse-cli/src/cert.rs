@@ -273,8 +273,8 @@ fn fingerprint_of(cert_path: &Path) -> Result<String, String> {
     Ok(pulse_config::tls::fingerprint(&certs[0]))
 }
 
-/// A self-signed leaf good for ~20 years. Server certs also carry SAN
-/// `DNS:pulse` (the name the agent's verifier is handed).
+/// A self-signed leaf valid from now until ~20 years out. Server certs also
+/// carry SAN `DNS:pulse` (the name the agent's verifier is handed).
 fn self_signed(role: Role, dns: &[String], ip: &[String]) -> Result<(String, String), String> {
     let mut names = Vec::new();
     if role == Role::Server {
@@ -299,8 +299,11 @@ fn self_signed(role: Role, dns: &[String], ip: &[String]) -> Result<(String, Str
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, cn);
-    params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2040, 1, 1);
+    // Relative to the current time so a cert generated in (say) 2041 isn't born
+    // expired. A day of backdating absorbs modest clock skew between hosts.
+    let now = time::OffsetDateTime::now_utc();
+    params.not_before = now - time::Duration::days(1);
+    params.not_after = now + time::Duration::days(365 * 20);
 
     let key = rcgen::KeyPair::generate().map_err(|e| format!("key generation: {e}"))?;
     let cert = params

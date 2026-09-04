@@ -91,6 +91,9 @@ pub trait Store: Send + Sync + 'static {
 
     fn list_hosts(&self) -> Result<Vec<HostRow>, StoreError>;
 
+    /// Whether a host row exists for `machine_id`.
+    fn host_exists(&self, machine_id: &str) -> Result<bool, StoreError>;
+
     /// Newest full report for every known host.
     fn latest_per_host(&self) -> Result<Vec<Report>, StoreError>;
 
@@ -162,6 +165,9 @@ impl Store for NoopStore {
     }
     fn list_hosts(&self) -> Result<Vec<HostRow>, StoreError> {
         Ok(Vec::new())
+    }
+    fn host_exists(&self, _: &str) -> Result<bool, StoreError> {
+        Ok(false)
     }
     fn latest_per_host(&self) -> Result<Vec<Report>, StoreError> {
         Ok(Vec::new())
@@ -262,6 +268,11 @@ impl StoreHandle {
     pub async fn list_hosts(&self) -> Result<Vec<HostRow>, StoreError> {
         let inner = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || inner.list_hosts()).await?
+    }
+
+    pub async fn host_exists(&self, machine_id: String) -> Result<bool, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.host_exists(&machine_id)).await?
     }
 
     pub async fn latest_per_host(&self) -> Result<Vec<Report>, StoreError> {

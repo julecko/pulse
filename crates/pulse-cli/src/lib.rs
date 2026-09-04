@@ -283,8 +283,9 @@ where
         .unwrap_or_else(|| "vi".into());
 
     let tmp = path.with_file_name(format!(
-        "{}.new",
-        path.file_name().unwrap_or_default().to_string_lossy()
+        "{}.{}.new",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id(),
     ));
     fs::write(&tmp, &seed).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
 
@@ -410,14 +411,42 @@ fn prompt_retry() -> bool {
 }
 
 /// Write `body` to `path` via a temp file + rename, creating parent dirs.
+///
+/// The temp file has a unique name (pid + a process-local counter) and is opened
+/// `O_CREAT | O_EXCL`, so concurrent `pulse-* config` invocations can't clobber
+/// each other's scratch file or be steered through a pre-planted symlink. It is
+/// flushed to disk before the rename and removed on any failure.
 fn write_atomic(path: &Path, body: &str) -> Result<(), String> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     }
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let base = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy()
+        ".{base}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed),
     ));
-    fs::write(&tmp, body).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, path).map_err(|e| format!("saving {}: {e}", path.display()))
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| format!("creating {}: {e}", tmp.display()))?;
+
+    let write = file
+        .write_all(body.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = write {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("writing {}: {e}", tmp.display()));
+    }
+
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("saving {}: {e}", path.display())
+    })
 }
