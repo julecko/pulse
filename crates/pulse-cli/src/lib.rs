@@ -12,7 +12,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -35,6 +35,10 @@ pub struct App {
     pub role: Role,
     /// System user the daemon runs as; generated key/cert are chowned to it.
     pub service_user: Option<&'static str>,
+    /// A subcommand the front-end binary intercepts before clap sees it (so it
+    /// has no variant in `Cmd`). Listed under "Commands" in `--help` as
+    /// `(name, about)`; actual dispatch happens in the binary's `main`.
+    pub extra_subcommand: Option<(&'static str, &'static str)>,
 }
 
 impl App {
@@ -144,7 +148,20 @@ pub fn run<C>(app: App) -> ExitCode
 where
     C: Serialize + DeserializeOwned + Default,
 {
-    let cli = match Cli::try_parse_from(program_args(app.unit)) {
+    let mut command = Cli::command();
+    if let Some((name, about)) = app.extra_subcommand {
+        // Shown in help only — the binary's `main` intercepts this before us.
+        command = command.subcommand(
+            clap::Command::new(name)
+                .about(about)
+                .disable_help_flag(true)
+                .allow_external_subcommands(true),
+        );
+    }
+    let cli = match command
+        .try_get_matches_from_mut(program_args(app.unit))
+        .and_then(|m| Cli::from_arg_matches(&m))
+    {
         Ok(cli) => cli,
         Err(err) => {
             let _ = err.print();

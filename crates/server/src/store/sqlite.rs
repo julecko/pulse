@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use protocol::Report;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{Bucket, HostRow, Store, StoreError};
+use super::{Bucket, HostRow, Store, StoreError, UserRow};
 
 /// Bump when `SCHEMA` changes shape. A DB written by a newer binary is refused.
 const SCHEMA_VERSION: u32 = 1;
@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_machine_ts ON reports (machine_id, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_reports_recv       ON reports (recv_ms);
+
+CREATE TABLE IF NOT EXISTS users (
+  name       TEXT PRIMARY KEY,
+  pw_hash    TEXT NOT NULL,
+  created_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  username   TEXT NOT NULL REFERENCES users(name) ON DELETE CASCADE,
+  created_ms INTEGER NOT NULL,
+  expires_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_ms);
 ";
 
 pub struct SqliteStore {
@@ -113,7 +128,6 @@ impl SqliteStore {
 }
 
 /// Run a `SELECT body FROM ...` and MessagePack-decode each blob.
-#[allow(dead_code)] // reached only via the read path (HTTP API, follow-up change)
 fn decode_reports(
     conn: &Connection,
     sql: &str,
@@ -299,6 +313,104 @@ impl Store for SqliteStore {
         // Return freed pages to the OS (no-op unless auto_vacuum = INCREMENTAL).
         let _ = conn.execute_batch("PRAGMA incremental_vacuum;");
         Ok(removed as u64)
+    }
+
+    fn create_user(&self, name: &str, pw_hash: &str, now_ms: u64) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "INSERT INTO users (name, pw_hash, created_ms) VALUES (?1, ?2, ?3)
+             ON CONFLICT(name) DO NOTHING",
+            params![name, pw_hash, now_ms as i64],
+        )?;
+        Ok(n == 1)
+    }
+
+    fn set_password(&self, name: &str, pw_hash: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE users SET pw_hash = ?2 WHERE name = ?1",
+            params![name, pw_hash],
+        )?;
+        Ok(n == 1)
+    }
+
+    fn delete_user(&self, name: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM users WHERE name = ?1", params![name])?;
+        Ok(n == 1)
+    }
+
+    fn list_users(&self) -> Result<Vec<UserRow>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT name, created_ms FROM users ORDER BY name")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(UserRow {
+                name: r.get(0)?,
+                created_ms: r.get::<_, i64>(1)? as u64,
+            })
+        })?;
+        rows.collect::<Result<_, _>>().map_err(Into::into)
+    }
+
+    fn user_hash(&self, name: &str) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT pw_hash FROM users WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    fn user_count(&self) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get::<_, i64>(0))? as u64)
+    }
+
+    fn create_session(
+        &self,
+        token_hash: &str,
+        username: &str,
+        created_ms: u64,
+        expires_ms: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO sessions (token_hash, username, created_ms, expires_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![token_hash, username, created_ms as i64, expires_ms as i64],
+        )?;
+        Ok(())
+    }
+
+    fn session_user(&self, token_hash: &str, now_ms: u64) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT username FROM sessions WHERE token_hash = ?1 AND expires_ms > ?2",
+                params![token_hash, now_ms as i64],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    fn delete_session(&self, token_hash: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "DELETE FROM sessions WHERE token_hash = ?1",
+            params![token_hash],
+        )?;
+        Ok(n == 1)
+    }
+
+    fn prune_sessions(&self, now_ms: u64) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "DELETE FROM sessions WHERE expires_ms <= ?1",
+            params![now_ms as i64],
+        )?;
+        Ok(n as u64)
     }
 }
 
@@ -496,5 +608,56 @@ mod tests {
             Err(StoreError::SchemaTooNew { found: 999, .. }) => {}
             other => panic!("expected SchemaTooNew, got {:?}", other.err()),
         }
+    }
+
+    #[test]
+    fn users_crud_and_uniqueness() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        assert_eq!(s.user_count().unwrap(), 0);
+        assert!(s.create_user("alice", "hash-a", 1_000).unwrap());
+        assert!(!s.create_user("alice", "hash-a2", 1_050).unwrap()); // duplicate
+        assert!(s.create_user("bob", "hash-b", 2_000).unwrap());
+        assert_eq!(s.user_count().unwrap(), 2);
+
+        assert_eq!(s.user_hash("alice").unwrap().as_deref(), Some("hash-a"));
+        assert!(s.set_password("alice", "hash-a-new").unwrap());
+        assert_eq!(s.user_hash("alice").unwrap().as_deref(), Some("hash-a-new"));
+        assert!(!s.set_password("nobody", "x").unwrap());
+
+        let names: Vec<String> = s
+            .list_users()
+            .unwrap()
+            .into_iter()
+            .map(|u| u.name)
+            .collect();
+        assert_eq!(names, vec!["alice", "bob"]);
+
+        assert!(s.delete_user("alice").unwrap());
+        assert!(!s.delete_user("alice").unwrap());
+        assert!(s.user_hash("alice").unwrap().is_none());
+    }
+
+    #[test]
+    fn sessions_expire_and_cascade() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        s.create_user("alice", "h", 0).unwrap();
+        s.create_session("tok-live", "alice", 0, 1_000).unwrap();
+        s.create_session("tok-dead", "alice", 0, 10).unwrap();
+
+        assert_eq!(
+            s.session_user("tok-live", 500).unwrap().as_deref(),
+            Some("alice")
+        );
+        assert!(s.session_user("tok-dead", 500).unwrap().is_none()); // expired
+        assert!(s.session_user("tok-missing", 500).unwrap().is_none());
+
+        assert_eq!(s.prune_sessions(500).unwrap(), 1); // only tok-dead
+        assert!(s.delete_session("tok-live").unwrap());
+        assert!(!s.delete_session("tok-live").unwrap());
+
+        // deleting the user cascades to their sessions
+        s.create_session("tok-2", "alice", 0, 9_999).unwrap();
+        s.delete_user("alice").unwrap();
+        assert!(s.session_user("tok-2", 1).unwrap().is_none());
     }
 }

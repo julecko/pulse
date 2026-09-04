@@ -7,5 +7,6 @@ fn main() -> ExitCode {
         daemon: "/usr/lib/pulse/pulse-agentd",
         role: pulse_cli::Role::Agent,
         service_user: Some("pulse"),
+        extra_subcommand: None,
     })
 }

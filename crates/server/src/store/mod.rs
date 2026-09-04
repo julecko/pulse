@@ -1,10 +1,12 @@
 //! Persistent history storage.
 //!
 //! Everything is keyed by `machine_id` — the agent's stable identity. The
-//! `hosts` table is the agent registry; every other table (`reports` today,
-//! things like `ssh_logins` later) carries a `machine_id` column with a
-//! `REFERENCES hosts(machine_id) ON DELETE CASCADE` foreign key, so an agent
-//! and all of its data are bound together and removed together.
+//! `hosts` table is the agent registry; every other metrics table (`reports`
+//! today, things like `ssh_logins` later) carries a `machine_id` column with a
+//! `REFERENCES hosts(machine_id) ON DELETE CASCADE` foreign key, so an agent and
+//! all of its data are bound together and removed together.
+//!
+//! The same database also holds API `users` and `sessions`.
 //!
 //! [`SqliteStore`] is blocking. [`StoreHandle`] is the async wrapper callers
 //! use: every method runs the blocking work on `tokio::task::spawn_blocking`,
@@ -18,6 +20,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use protocol::Report;
+use serde::Serialize;
 
 pub use sqlite::SqliteStore;
 
@@ -46,9 +49,7 @@ pub enum StoreError {
 }
 
 /// One row of the `hosts` table — an agent plus a few denormalised counters.
-// Fields are surfaced by the HTTP API (follow-up change) and exercised by tests.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HostRow {
     pub machine_id: String,
     pub hostname: String,
@@ -62,8 +63,7 @@ pub struct HostRow {
 }
 
 /// One downsampled time bucket from [`Store::history`].
-#[allow(dead_code)] // consumed by the HTTP API (follow-up change)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Bucket {
     pub ts_ms: u64,
     pub cpu_avg: Option<f64>,
@@ -74,8 +74,17 @@ pub struct Bucket {
     pub samples: u64,
 }
 
+/// One row of the `users` table.
+#[derive(Debug, Clone, Serialize)]
+pub struct UserRow {
+    pub name: String,
+    pub created_ms: u64,
+}
+
 /// Blocking storage backend.
 pub trait Store: Send + Sync + 'static {
+    // --- metrics history ---
+
     /// Upsert the host row and append the report. A duplicate `(machine_id,
     /// ts_ms)` is ignored (a retransmit of the same sample).
     fn insert_report(&self, report: &Report, recv_ms: u64, peer: IpAddr) -> Result<(), StoreError>;
@@ -109,11 +118,43 @@ pub trait Store: Send + Sync + 'static {
 
     /// Delete report rows received before `cutoff_recv_ms`. Returns rows removed.
     fn prune(&self, cutoff_recv_ms: u64) -> Result<u64, StoreError>;
+
+    // --- API accounts & sessions ---
+
+    /// Insert a user. Returns `false` if the name is already taken.
+    fn create_user(&self, name: &str, pw_hash: &str, now_ms: u64) -> Result<bool, StoreError>;
+    /// Replace a user's password hash. Returns `false` if the user is unknown.
+    fn set_password(&self, name: &str, pw_hash: &str) -> Result<bool, StoreError>;
+    /// Delete a user (and cascade their sessions). Returns `false` if unknown.
+    fn delete_user(&self, name: &str) -> Result<bool, StoreError>;
+    fn list_users(&self) -> Result<Vec<UserRow>, StoreError>;
+    fn user_hash(&self, name: &str) -> Result<Option<String>, StoreError>;
+    fn user_count(&self) -> Result<u64, StoreError>;
+
+    fn create_session(
+        &self,
+        token_hash: &str,
+        username: &str,
+        created_ms: u64,
+        expires_ms: u64,
+    ) -> Result<(), StoreError>;
+    /// The user a live (unexpired) session belongs to.
+    fn session_user(&self, token_hash: &str, now_ms: u64) -> Result<Option<String>, StoreError>;
+    fn delete_session(&self, token_hash: &str) -> Result<bool, StoreError>;
+    /// Delete expired sessions. Returns rows removed.
+    fn prune_sessions(&self, now_ms: u64) -> Result<u64, StoreError>;
 }
 
-/// Backend used when `[storage] enabled = false` — accepts everything, keeps
-/// nothing.
+/// Backend used when `[storage] enabled = false` — accepts reports, keeps
+/// nothing. Account operations fail loudly so the API cannot silently run
+/// without persistence.
 pub struct NoopStore;
+
+const NO_DB: &str = "storage is disabled (set [storage] enabled = true)";
+
+fn no_db<T>() -> Result<T, StoreError> {
+    Err(StoreError::Io(std::io::Error::other(NO_DB)))
+}
 
 impl Store for NoopStore {
     fn insert_report(&self, _: &Report, _: u64, _: IpAddr) -> Result<(), StoreError> {
@@ -135,6 +176,36 @@ impl Store for NoopStore {
         Ok(Vec::new())
     }
     fn prune(&self, _: u64) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+    fn create_user(&self, _: &str, _: &str, _: u64) -> Result<bool, StoreError> {
+        no_db()
+    }
+    fn set_password(&self, _: &str, _: &str) -> Result<bool, StoreError> {
+        no_db()
+    }
+    fn delete_user(&self, _: &str) -> Result<bool, StoreError> {
+        no_db()
+    }
+    fn list_users(&self) -> Result<Vec<UserRow>, StoreError> {
+        no_db()
+    }
+    fn user_hash(&self, _: &str) -> Result<Option<String>, StoreError> {
+        Ok(None)
+    }
+    fn user_count(&self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+    fn create_session(&self, _: &str, _: &str, _: u64, _: u64) -> Result<(), StoreError> {
+        no_db()
+    }
+    fn session_user(&self, _: &str, _: u64) -> Result<Option<String>, StoreError> {
+        Ok(None)
+    }
+    fn delete_session(&self, _: &str) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+    fn prune_sessions(&self, _: u64) -> Result<u64, StoreError> {
         Ok(0)
     }
 }
@@ -182,11 +253,12 @@ impl StoreHandle {
         let inner = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || inner.prune(cutoff_recv_ms)).await?
     }
-}
 
-// Read path — consumed by the HTTP API (added in a follow-up change).
-#[allow(dead_code)]
-impl StoreHandle {
+    pub async fn prune_sessions(&self, now_ms: u64) -> Result<u64, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.prune_sessions(now_ms)).await?
+    }
+
     pub async fn list_hosts(&self) -> Result<Vec<HostRow>, StoreError> {
         let inner = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || inner.list_hosts()).await?
@@ -226,5 +298,43 @@ impl StoreHandle {
             inner.recent_reports(&machine_id, from_ms, to_ms, limit)
         })
         .await?
+    }
+
+    pub async fn user_hash(&self, name: String) -> Result<Option<String>, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.user_hash(&name)).await?
+    }
+
+    pub async fn user_count(&self) -> Result<u64, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.user_count()).await?
+    }
+
+    pub async fn create_session(
+        &self,
+        token_hash: String,
+        username: String,
+        created_ms: u64,
+        expires_ms: u64,
+    ) -> Result<(), StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            inner.create_session(&token_hash, &username, created_ms, expires_ms)
+        })
+        .await?
+    }
+
+    pub async fn session_user(
+        &self,
+        token_hash: String,
+        now_ms: u64,
+    ) -> Result<Option<String>, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.session_user(&token_hash, now_ms)).await?
+    }
+
+    pub async fn delete_session(&self, token_hash: String) -> Result<bool, StoreError> {
+        let inner = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || inner.delete_session(&token_hash)).await?
     }
 }

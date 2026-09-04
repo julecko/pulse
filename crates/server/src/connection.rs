@@ -7,6 +7,7 @@ use protocol::{ProtocolError, Report};
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tracing::{info, warn};
 
+use crate::live::Live;
 use crate::registry::{Registry, Verdict};
 use crate::store::{StoreHandle, now_unix_ms};
 
@@ -16,6 +17,7 @@ pub async fn handle<S>(
     peer: SocketAddr,
     registry: Arc<Mutex<Registry>>,
     store: StoreHandle,
+    live: Arc<Live>,
 ) -> Result<(), ProtocolError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -49,12 +51,11 @@ where
         #[cfg(debug_assertions)]
         print!("{}", render(&peer, seq, total, &report));
 
-        // Persist for history. A storage failure is logged, not fatal — the
-        // live path (registry / event) has already succeeded.
-        if let Err(err) = store
-            .insert_report(Arc::new(report), recv_ms, peer.ip())
-            .await
-        {
+        // Fan out to live subscribers (in-memory, non-blocking) then persist.
+        // A storage failure is logged, not fatal — the live path already ran.
+        let report = Arc::new(report);
+        live.publish(Arc::clone(&report));
+        if let Err(err) = store.insert_report(report, recv_ms, peer.ip()).await {
             warn!(%err, "history insert failed");
         }
     }

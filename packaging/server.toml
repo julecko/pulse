@@ -31,6 +31,21 @@ retention_days = 7
 # How often the pruner runs, in seconds (minimum 60).
 prune_interval_secs = 3600
 
+[api]
+# HTTP API for the pulse app (live host state + queryable history), guarded by
+# username/password sessions. Requires [storage] enabled = true and at least one
+# account:  sudo pulse-server user add <name>
+enabled = true
+# Keep this on loopback and put a TLS-terminating reverse proxy (nginx, Caddy)
+# in front for remote access — the API itself speaks plain HTTP.
+bind = "127.0.0.1:9100"
+# How long a login stays valid, in seconds (default 7 days).
+session_ttl_secs = 604800
+# A host is reported "online" if its last report is newer than this many seconds.
+online_secs = 30
+# Broadcast buffer for the live SSE stream, in reports.
+live_buffer = 256
+
 [log]
 # error | warn | info | debug | trace  (RUST_LOG overrides this when set)
 level = "info"

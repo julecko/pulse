@@ -12,5 +12,8 @@ name = "pulse-server"
 path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 pulse-cli = { path = "../pulse-cli" }
+pulse-config = { path = "../pulse-config" }
+rpassword = "7"
 server = { path = "../server" }

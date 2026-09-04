@@ -1,11 +1,16 @@
 //! pulse-serverd internals. The `pulse-serverd` binary is a thin `main` over
 //! [`run`]; the `pulse-server` binary is the config/control front-end.
 
+mod api;
 mod config;
 mod connection;
 mod limits;
+mod live;
+mod password;
 mod registry;
 mod store;
+
+pub mod admin;
 
 pub use config::Config;
 
@@ -21,8 +26,20 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, warn};
 
 use limits::RateLimiter;
+use live::Live;
 use registry::Registry;
 use store::{StoreHandle, now_unix_ms};
+
+/// Path of the history database for `cfg` — `[storage] path`, or
+/// `<state dir>/history.db` when unset. Shared by the daemon and the
+/// `pulse-server user` CLI.
+pub fn history_db_path(cfg: &Config) -> PathBuf {
+    if cfg.storage.path.is_empty() {
+        pulse_config::state_dir("server").join("history.db")
+    } else {
+        PathBuf::from(&cfg.storage.path)
+    }
+}
 
 /// Run the server: load config, set up logging, accept connections forever.
 pub async fn run() -> io::Result<()> {
@@ -44,11 +61,7 @@ pub async fn run() -> io::Result<()> {
     }
 
     let store = if cfg.storage.enabled {
-        let path = if cfg.storage.path.is_empty() {
-            pulse_config::state_dir("server").join("history.db")
-        } else {
-            PathBuf::from(&cfg.storage.path)
-        };
+        let path = history_db_path(&cfg);
         match StoreHandle::open_sqlite(&path) {
             Ok(store) => {
                 info!(
@@ -70,6 +83,36 @@ pub async fn run() -> io::Result<()> {
 
     if store.is_persistent() {
         spawn_pruner(store.clone(), &cfg.storage);
+    }
+
+    let live = Arc::new(Live::new(cfg.api.live_buffer.max(16)));
+    if store.is_persistent() {
+        match store.latest_per_host().await {
+            Ok(reports) => live.seed(reports),
+            Err(err) => warn!(%err, "could not seed live state from storage"),
+        }
+    }
+
+    if cfg.api.enabled {
+        if !store.is_persistent() {
+            eprintln!("api: [api] enabled requires [storage] enabled = true");
+            std::process::exit(1);
+        }
+        match store.user_count().await {
+            Ok(0) => warn!(
+                "API is enabled but no accounts exist — create one with `pulse-server user add <name>`"
+            ),
+            Ok(n) => info!(accounts = n, "API accounts loaded"),
+            Err(err) => warn!(%err, "could not count API accounts"),
+        }
+        let api_cfg = cfg.api.clone();
+        let api_store = store.clone();
+        let api_live = Arc::clone(&live);
+        tokio::spawn(async move {
+            if let Err(err) = api::serve(api_cfg, api_store, api_live).await {
+                error!(%err, "API server stopped");
+            }
+        });
     }
 
     let acceptor: Option<TlsAcceptor> = if cfg.tls {
@@ -136,9 +179,10 @@ pub async fn run() -> io::Result<()> {
         let registry = Arc::clone(&registry);
         let acceptor = acceptor.clone();
         let store = store.clone();
+        let live = Arc::clone(&live);
         tokio::spawn(async move {
             let _permit = permit;
-            let work = drive(acceptor, tcp, peer, registry, store);
+            let work = drive(acceptor, tcp, peer, registry, store, live);
             match timeout {
                 Some(dur) => {
                     if tokio::time::timeout(dur, work).await.is_err() {
@@ -157,21 +201,27 @@ async fn drive(
     peer: SocketAddr,
     registry: Arc<Mutex<Registry>>,
     store: StoreHandle,
+    live: Arc<Live>,
 ) {
     match acceptor {
         Some(acceptor) => match acceptor.accept(tcp).await {
-            Ok(tls) => serve(tls, peer, registry, store).await,
+            Ok(tls) => serve(tls, peer, registry, store, live).await,
             Err(err) => warn!(%peer, %err, "TLS handshake failed"),
         },
-        None => serve(tcp, peer, registry, store).await,
+        None => serve(tcp, peer, registry, store, live).await,
     }
 }
 
-async fn serve<S>(stream: S, peer: SocketAddr, registry: Arc<Mutex<Registry>>, store: StoreHandle)
-where
+async fn serve<S>(
+    stream: S,
+    peer: SocketAddr,
+    registry: Arc<Mutex<Registry>>,
+    store: StoreHandle,
+    live: Arc<Live>,
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    if let Err(err) = connection::handle(stream, peer, registry, store).await {
+    if let Err(err) = connection::handle(stream, peer, registry, store, live).await {
         error!(%peer, %err, "connection error");
     }
 }
@@ -191,6 +241,11 @@ fn spawn_pruner(store: StoreHandle, storage: &config::Storage) {
                 Ok(0) => {}
                 Ok(n) => info!(deleted = n, "pruned reports past retention"),
                 Err(err) => warn!(%err, "prune failed"),
+            }
+            match store.prune_sessions(now_unix_ms()).await {
+                Ok(0) => {}
+                Ok(n) => info!(deleted = n, "pruned expired sessions"),
+                Err(err) => warn!(%err, "session prune failed"),
             }
         }
     });

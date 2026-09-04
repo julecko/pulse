@@ -17,7 +17,41 @@ pub struct Config {
     #[serde(default)]
     pub storage: Storage,
     #[serde(default)]
+    pub api: Api,
+    #[serde(default)]
     pub log: LogConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Api {
+    /// Serve the HTTP API for the pulse app (live + history). Requires
+    /// `[storage] enabled = true` and at least one account
+    /// (`pulse-server user add`).
+    pub enabled: bool,
+    /// Address the API listener binds to. Keep this on loopback and put a
+    /// TLS-terminating reverse proxy in front for remote access.
+    pub bind: String,
+    /// How long a login session stays valid, in seconds.
+    pub session_ttl_secs: u64,
+    /// A host counts as "online" if its last report is newer than this many
+    /// seconds.
+    pub online_secs: u64,
+    /// Broadcast buffer for the live SSE stream (reports). A subscriber slower
+    /// than this many reports behind is resynced from the latest snapshot.
+    pub live_buffer: usize,
+}
+
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: "127.0.0.1:9100".to_string(),
+            session_ttl_secs: 7 * 24 * 3600,
+            online_secs: 30,
+            live_buffer: 256,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +109,7 @@ impl Default for Config {
             tls: false,
             limits: Limits::default(),
             storage: Storage::default(),
+            api: Api::default(),
             log: LogConfig::default(),
         }
     }

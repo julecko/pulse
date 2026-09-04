@@ -60,9 +60,9 @@ and unit files are overwritten. Daemons go to `/usr/lib/pulse/`, front-ends to
 Override with `PULSE_SERVER_CONFIG` / `PULSE_AGENT_CONFIG` (full path). A missing
 file is fine (defaults + a log line); a malformed file is fatal.
 
-Settings: server `bind`; agent `server`, `interval_secs`; both take a `[log]`
-table (`level`, `file`, `ansi`, `rotation`, `keep_files`) and an optional
-`[tls]` table (see below).
+Settings: server `bind`, `[storage]` and `[api]` (see below); agent `server`,
+`interval_secs`; both take a `[log]` table (`level`, `file`, `ansi`, `rotation`,
+`keep_files`) and a `tls` flag (see below).
 
 ## TLS / authentication
 
@@ -135,6 +135,64 @@ The `[limits]` table caps `max_connections` (concurrent, excess dropped),
 `connection_timeout_secs` (handshake + one report, guards slow-loris). Checks
 run on the raw TCP accept, before the TLS handshake.
 
+## History storage (server)
+
+With `[storage] enabled = true` (the default) the server writes every received
+report to a SQLite database — `[storage] path`, or `/var/lib/pulse/history.db`
+when unset. Everything is keyed by the agent's `machine_id`: the `hosts` table
+is the agent registry and `reports` references it `ON DELETE CASCADE`, so an
+agent and all of its data are removed together (room to add tables like
+`ssh_logins` the same way later).
+
+`[storage] retention_days` (default 7) of history is kept; a background task
+prunes older rows and reclaims space every `prune_interval_secs`. The data
+survives restarts. Set `enabled = false` to run stateless (the API is then
+unavailable).
+
+## HTTP API (for the pulse app)
+
+`[api] enabled = true` starts a JSON API on `[api] bind` (default
+`127.0.0.1:9100`) with live host state and queryable history. It speaks **plain
+HTTP** — keep it on loopback and put a TLS-terminating reverse proxy
+(nginx/Caddy) in front for remote access. Requires `[storage] enabled` and at
+least one account.
+
+**Accounts** are managed on the server host (never over the API):
+
+```sh
+sudo pulse-server user add <name>      # prompts for a password (no echo)
+sudo pulse-server user list
+sudo pulse-server user passwd <name>
+sudo pulse-server user rm <name>       # also drops that user's sessions
+```
+
+Passwords must be ≥ 12 characters with a lowercase letter, an uppercase letter,
+a digit and a symbol, ≥ 5 distinct characters, and must not contain the
+username. Hashed with Argon2id. In a script, pipe the password on stdin:
+`printf '%s' "$pw" | sudo pulse-server user add ci`.
+
+**Auth flow:** `POST /api/v1/login` with `{"username","password"}` returns
+`{"token","expires_at_ms"}`. Send the token as `Authorization: Bearer <token>`
+(the SSE endpoint also accepts `?token=<token>`). Only `sha256(token)` is stored
+server-side; sessions last `[api] session_ttl_secs` (default 7 days) and are
+revoked by `POST /api/v1/logout`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET  | `/api/v1/healthz` | liveness (no auth) |
+| POST | `/api/v1/login` / `/api/v1/logout` | session lifecycle |
+| GET  | `/api/v1/hosts` | all hosts + online flag + latest cpu/mem/load |
+| GET  | `/api/v1/hosts/{machine_id}` | host detail + latest full report |
+| GET  | `/api/v1/hosts/{machine_id}/history?from=&to=&bucket=` | downsampled series for charts (ms; `bucket` auto-picked) |
+| GET  | `/api/v1/hosts/{machine_id}/reports?from=&to=&limit=` | raw full reports |
+| GET  | `/api/v1/live` | SSE stream — snapshot then one event per new report |
+
+`scripts/api_smoke_test.py` (stdlib only) exercises the whole surface:
+
+```sh
+scripts/api_smoke_test.py --url http://127.0.0.1:9100 --user alice --password '…'
+```
+
 ## Logs
 
 | Build   | `log.file` set | `log.file` unset          |
@@ -173,9 +231,10 @@ mem, disk count) to the log.
 Each `.deb` bundles the daemon + its front-end (`build-deb.sh` builds the whole
 workspace, then `cargo deb --no-build` assembles).
 
-Front-end commands: `config <path|show|check|init|edit|set>`,
+Front-end commands: `config <path|show|check|init|edit|set>`, `cert <…>`,
 `start|stop|restart|status|enable|disable` (→ `systemctl`), `run` (daemon in the
-foreground).
+foreground). `pulse-server` also has `user <add|list|passwd|rm>` for API
+accounts.
 
 ## Dev
 
