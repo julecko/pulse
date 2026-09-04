@@ -40,6 +40,18 @@ pub struct Api {
     /// Broadcast buffer for the live SSE stream (reports). A subscriber slower
     /// than this many reports behind is resynced from the latest snapshot.
     pub live_buffer: usize,
+    /// Max `POST /login` attempts accepted from one client address per minute
+    /// (0 = no limit). Guards against password brute-force and against Argon2
+    /// CPU/memory exhaustion from a login flood.
+    pub login_per_ip_per_minute: u32,
+    /// Max password verifications running at once (0 = unlimited). Argon2id is
+    /// memory-hard, so this bounds worst-case RAM when many logins arrive together.
+    pub login_max_concurrent: usize,
+    /// Trust the `X-Forwarded-For` header for the client address used by the
+    /// login limiter. Enable this **only** when the API sits behind a reverse
+    /// proxy you control (otherwise a client can spoof the header and dodge the
+    /// limit). With it off, all requests via a proxy share one bucket.
+    pub trust_forwarded_for: bool,
 }
 
 impl Default for Api {
@@ -50,6 +62,9 @@ impl Default for Api {
             session_ttl_secs: 7 * 24 * 3600,
             online_secs: 30,
             live_buffer: 256,
+            login_per_ip_per_minute: 10,
+            login_max_concurrent: 4,
+            trust_forwarded_for: false,
         }
     }
 }

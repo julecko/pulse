@@ -177,6 +177,14 @@ username. Hashed with Argon2id. In a script, pipe the password on stdin:
 server-side; sessions last `[api] session_ttl_secs` (default 7 days) and are
 revoked by `POST /api/v1/logout`.
 
+`/login` is rate-limited to `[api] login_per_ip_per_minute` attempts per client
+address (default 10; `429` past that) and runs at most `[api]
+login_max_concurrent` Argon2 checks at once, so it can't be used to brute-force
+passwords or exhaust CPU/RAM. Behind a reverse proxy, set `[api]
+trust_forwarded_for = true` so the limiter keys on the real client IP rather than
+the proxy's loopback address. Failed and throttled attempts are logged with the
+source IP.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET  | `/api/v1/healthz` | liveness (no auth) |

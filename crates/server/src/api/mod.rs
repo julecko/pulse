@@ -10,11 +10,14 @@ mod dto;
 mod routes;
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::sync::Semaphore;
 use tracing::info;
 
 use crate::config::Api;
+use crate::limits::RateLimiter;
 use crate::live::Live;
 use crate::store::StoreHandle;
 
@@ -24,18 +27,34 @@ struct ApiState {
     live: Arc<Live>,
     session_ttl_secs: u64,
     online_secs: u64,
+    /// Per-client-address throttle on `POST /login`.
+    login_rate: Arc<RateLimiter>,
+    /// Bounds how many Argon2 verifications run concurrently.
+    login_gate: Arc<Semaphore>,
+    trust_forwarded_for: bool,
 }
 
 /// Bind `cfg.bind` and serve the API until the process exits. Returns on a bind
 /// error (the caller logs and continues — the ingest listener is independent).
 pub async fn serve(cfg: Api, store: StoreHandle, live: Arc<Live>) -> io::Result<()> {
+    let login_gate = Arc::new(Semaphore::new(match cfg.login_max_concurrent {
+        0 => Semaphore::MAX_PERMITS,
+        n => n,
+    }));
     let state = ApiState {
         store,
         live,
         session_ttl_secs: cfg.session_ttl_secs.max(60),
         online_secs: cfg.online_secs,
+        login_rate: Arc::new(RateLimiter::new(cfg.login_per_ip_per_minute)),
+        login_gate,
+        trust_forwarded_for: cfg.trust_forwarded_for,
     };
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
     info!(bind = %cfg.bind, "API listening");
-    axum::serve(listener, routes::router(state)).await
+    axum::serve(
+        listener,
+        routes::router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
 }

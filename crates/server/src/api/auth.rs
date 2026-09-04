@@ -5,13 +5,14 @@
 //! the raw token is shown to the client once. Requests carry it as
 //! `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=`).
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 
 use axum::Json;
-use axum::extract::{FromRequestParts, State};
-use axum::http::StatusCode;
+use axum::extract::{ConnectInfo, FromRequestParts, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -62,19 +63,39 @@ pub struct LoginResp {
 
 pub async fn login(
     State(st): State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<LoginResp>, ApiError> {
+    // Brute-force / DoS guard: throttle attempts per client address *before* any
+    // password hashing, then cap how many Argon2 verifications run at once
+    // (Argon2id is deliberately expensive in CPU and memory).
+    let ip = client_ip(&st, &headers, peer);
+    if !st.login_rate.allow(ip) {
+        tracing::warn!(%ip, user = %req.username, "login rate limit hit");
+        return Err(ApiError::too_many_requests(
+            "too many login attempts — try again in a minute",
+        ));
+    }
+    let _permit = st.login_gate.clone().acquire_owned().await.ok();
+
     let stored = st.store.user_hash(req.username.clone()).await?;
-    // Always run a verification so a missing user and a wrong password take a
-    // similar amount of time.
-    let ok = match &stored {
-        Some(hash) => password::verify(&req.password, hash),
+    let password = req.password.clone();
+    // Run Argon2 on the blocking pool — inline it would stall an async worker.
+    // Always verify (against a dummy hash when the user is missing) so timing
+    // doesn't reveal whether the account exists.
+    let ok = tokio::task::spawn_blocking(move || match &stored {
+        Some(hash) => password::verify(&password, hash),
         None => {
-            password::verify(&req.password, dummy_hash());
+            password::verify(&password, dummy_hash());
             false
         }
-    };
+    })
+    .await
+    .map_err(ApiError::internal)?;
+
     if !ok {
+        tracing::warn!(%ip, user = %req.username, "failed login");
         return Err(ApiError::unauthorized_msg("invalid username or password"));
     }
 
@@ -121,6 +142,22 @@ fn bearer_token(parts: &Parts) -> Option<String> {
             (k == "token" && !v.is_empty()).then(|| v.to_string())
         })
     })
+}
+
+/// Client address for the login limiter. When `trust_forwarded_for` is set (the
+/// API is behind a reverse proxy on loopback), the first `X-Forwarded-For` entry
+/// wins; otherwise the raw socket peer.
+fn client_ip(st: &ApiState, headers: &HeaderMap, peer: SocketAddr) -> IpAddr {
+    if st.trust_forwarded_for
+        && let Some(ip) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.trim().parse::<IpAddr>().ok())
+    {
+        return ip;
+    }
+    peer.ip()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

@@ -40,6 +40,12 @@ impl ApiError {
             message: m.into(),
         }
     }
+    pub fn too_many_requests(m: &str) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: m.into(),
+        }
+    }
     pub fn internal(e: impl std::fmt::Display) -> Self {
         tracing::error!(error = %e, "api internal error");
         Self {
