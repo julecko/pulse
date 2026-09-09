@@ -1,5 +1,7 @@
 mod collector;
 mod cpu;
+mod disk;
+mod linux;
 mod memory;
 
 pub use collector::{Collector, Context};
@@ -7,10 +9,14 @@ pub use collector::{Collector, Context};
 use protocol::Metrics;
 
 fn registry() -> Vec<Box<dyn Collector>> {
-    let collectors: Vec<Box<dyn Collector>> = vec![
+    let mut collectors: Vec<Box<dyn Collector>> = vec![
         Box::new(cpu::CpuCollector),
         Box::new(memory::MemoryCollector),
+        Box::new(disk::DiskCollector),
     ];
+
+    #[cfg(target_os = "linux")]
+    collectors.push(Box::new(linux::LinuxCollector));
 
     collectors
 }
