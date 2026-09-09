@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# pre-commit hook for Rust projects
+# Fast, local checks only. Heavier checks (clippy, tests) live in pre-push.
+#
+# Install: copy to .git/hooks/pre-commit and `chmod +x` it,
+# or use the provided install.sh.
+
+set -eo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo "→ Running pre-commit checks..."
+
+# Skip if no staged Rust files (avoids slowing down non-Rust commits in mixed repos)
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.rs$|Cargo\.(toml|lock)$'; then
+    STAGED_RUST=1
+else
+    STAGED_RUST=0
+fi
+
+if [ "$STAGED_RUST" -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} No Rust files staged, skipping Rust checks."
+    exit 0
+fi
+
+# 1. Formatting
+echo "  · cargo fmt --check"
+if ! cargo fmt --all -- --check; then
+    echo -e "${RED}✗ Formatting issues found.${NC} Run 'cargo fmt --all' and re-stage your changes."
+    exit 1
+fi
+
+# 2. Fast compile check (catches type errors etc. without full build)
+echo "  · cargo check"
+if ! cargo check --all-targets --quiet; then
+    echo -e "${RED}✗ cargo check failed.${NC} Fix compile errors before committing."
+    exit 1
+fi
+
+echo -e "${GREEN}✓ pre-commit checks passed.${NC}"
+exit 0
