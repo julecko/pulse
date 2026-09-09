@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 protocol = { path = "../protocol" }
+pulse-shared = { path = "../pulse-shared" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = "0.38.4"
+tracing = "0.1"

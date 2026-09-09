@@ -26,12 +26,10 @@ pub fn collect() -> Metrics {
     let mut metrics = Metrics::default();
 
     for collector in registry().iter_mut() {
-        if let Err(err) = collector.collect_into(&mut ctx, &mut metrics) {
-            eprintln!(
-                "WARN collector failed: collector={} err={}",
-                collector.name(),
-                err
-            );
+        let name = collector.name();
+        match collector.collect_into(&mut ctx, &mut metrics) {
+            Ok(()) => tracing::debug!(collector = name, "collected"),
+            Err(err) => tracing::warn!(collector = name, %err, "collector failed"),
         }
     }
 
