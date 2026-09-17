@@ -59,7 +59,7 @@ impl Default for LogConfig {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum LogError {
     #[error("invalid log filter {0:?}: {1}")]
     Filter(String, String),
     #[error("invalid log rotation {0:?} (expected daily|hourly|minutely|never)")]
@@ -70,10 +70,10 @@ pub enum Error {
 ///
 /// Keep the returned guard alive for the whole process — dropping it flushes
 /// and stops the file-writer thread, so an early drop loses buffered output.
-pub fn init(app: &str, cfg: &LogConfig) -> Result<Option<WorkerGuard>, Error> {
+pub fn init(app: &str, cfg: &LogConfig) -> Result<Option<WorkerGuard>, LogError> {
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(&cfg.level))
-        .map_err(|e| Error::Filter(cfg.level.clone(), e.to_string()))?;
+        .map_err(|e| LogError::Filter(cfg.level.clone(), e.to_string()))?;
 
     let rotation = parse_rotation(&cfg.rotation)?;
 
@@ -116,13 +116,13 @@ pub fn init(app: &str, cfg: &LogConfig) -> Result<Option<WorkerGuard>, Error> {
     Ok(None)
 }
 
-fn parse_rotation(s: &str) -> Result<Rotation, Error> {
+fn parse_rotation(s: &str) -> Result<Rotation, LogError> {
     match s.to_ascii_lowercase().as_str() {
         "daily" => Ok(Rotation::DAILY),
         "hourly" => Ok(Rotation::HOURLY),
         "minutely" => Ok(Rotation::MINUTELY),
         "never" | "none" => Ok(Rotation::NEVER),
-        _ => Err(Error::Rotation(s.to_string())),
+        _ => Err(LogError::Rotation(s.to_string())),
     }
 }
 

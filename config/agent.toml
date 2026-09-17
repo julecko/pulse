@@ -1,0 +1,28 @@
+# Default agent config, used automatically in debug builds when running
+# from the workspace root (see pulse-shared::config::default_path).
+# In release builds this has no effect; the real file lives at
+# /etc/pulse/agent.toml instead.
+
+# Domain or IP (with port) of the server to send metrics to.
+server_addr = "127.0.0.1:8080"
+
+# How often to collect and send metrics, in seconds.
+interval_secs = 60
+
+[log]
+# error | warn | info | debug | trace, or any RUST_LOG-style filter string.
+# RUST_LOG, if set, overrides this.
+level = "info"
+
+# Explicit log file path. Leave unset: stdout in debug, /var/log/pulse/agent.log
+# in release.
+# file = "/var/log/pulse/agent.log"
+
+# ANSI colours; only applies when writing to a terminal.
+ansi = true
+
+# How often to start a new log file: daily | hourly | minutely | never.
+rotation = "daily"
+
+# Keep at most this many rotated log files, deleting the oldest (0 = keep all).
+keep_files = 10
