@@ -1,2 +1,2 @@
 mod metrics;
-pub use metrics::{CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics};
+pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics};

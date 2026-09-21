@@ -1,6 +1,7 @@
 mod collector;
 mod cpu;
 mod disk;
+mod host;
 mod linux;
 mod memory;
 
@@ -10,6 +11,7 @@ use protocol::Metrics;
 
 fn registry() -> Vec<Box<dyn Collector>> {
     let mut collectors: Vec<Box<dyn Collector>> = vec![
+        Box::new(host::HostCollector),
         Box::new(cpu::CpuCollector),
         Box::new(memory::MemoryCollector),
         Box::new(disk::DiskCollector),

@@ -2,10 +2,20 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Metrics {
+    pub host: Option<HostInfo>,
     pub cpu: Option<CpuInfo>,
     pub memory: Option<MemoryInfo>,
     pub disks: Vec<DiskInfo>,
     pub linux: Option<LinuxInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HostInfo {
+    pub hostname: String,
+    pub os_name: String,
+    pub os_version: String,
+    pub kernel_version: String,
+    pub arch: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
