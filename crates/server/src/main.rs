@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod web;
 
 use config::ServerConfig;
@@ -20,7 +21,12 @@ async fn main() {
 
     tracing::info!("server starting");
 
-    if let Err(err) = web::serve(&cfg.web).await {
+    let pool = db::connect(&cfg.db).await.unwrap_or_else(|err| {
+        tracing::error!("server: failed to connect to database: {err}");
+        std::process::exit(1);
+    });
+
+    if let Err(err) = web::serve(&cfg.web, pool).await {
         tracing::error!("server: web server error: {err}");
         std::process::exit(1);
     }

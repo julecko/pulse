@@ -1,6 +1,7 @@
 use pulse_shared::LogConfig;
 use serde::{Deserialize, Serialize};
 
+use crate::db::DbConfig;
 use crate::web::WebConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,6 +9,7 @@ use crate::web::WebConfig;
 pub struct ServerConfig {
     pub log: LogConfig,
     pub web: WebConfig,
+    pub db: DbConfig,
 }
 
 impl Default for ServerConfig {
@@ -15,6 +17,7 @@ impl Default for ServerConfig {
         Self {
             log: LogConfig::default(),
             web: WebConfig::default(),
+            db: DbConfig::default(),
         }
     }
 }

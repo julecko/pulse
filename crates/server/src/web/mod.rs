@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use axum_server::tls_rustls::RustlsConfig;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
 /// Release default cert dir; matches `ConfigurationDirectory=pulse` in the systemd unit.
 pub const DEFAULT_CERT_DIR: &str = "/etc/pulse/certs";
@@ -50,7 +51,7 @@ fn cert_dir() -> PathBuf {
     }
 }
 
-pub async fn serve(cfg: &WebConfig) -> Result<(), WebError> {
+pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
     let dir = cert_dir();
     let cert = cfg.tls.cert.clone().unwrap_or_else(|| dir.join("cert.pem"));
     let key = cfg.tls.key.clone().unwrap_or_else(|| dir.join("key.pem"));
@@ -62,7 +63,7 @@ pub async fn serve(cfg: &WebConfig) -> Result<(), WebError> {
     tracing::info!(bind = %cfg.bind, cert = %cert.display(), key = %key.display(), "web server listening");
 
     axum_server::bind_rustls(cfg.bind, tls)
-        .serve(routes::router().into_make_service())
+        .serve(routes::router(pool).into_make_service())
         .await
         .map_err(|e| WebError::Serve(cfg.bind, e))
 }

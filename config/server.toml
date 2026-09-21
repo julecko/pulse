@@ -30,3 +30,8 @@ bind = "0.0.0.0:8443"
 # /etc/pulse/certs/{cert,key}.pem in release.
 # cert = "/etc/pulse/certs/cert.pem"
 # key = "/etc/pulse/certs/key.pem"
+
+[db]
+# Explicit SQLite database file. Leave unset: ./data/server.db in debug,
+# /var/lib/pulse/server.db in release.
+# path = "/var/lib/pulse/server.db"
