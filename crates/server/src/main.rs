@@ -1,8 +1,10 @@
 mod config;
+mod web;
 
 use config::ServerConfig;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cfg: ServerConfig = pulse_shared::config::load("server").unwrap_or_else(|err| {
         eprintln!("server: failed to load config: {err}");
         std::process::exit(1);
@@ -17,4 +19,9 @@ fn main() {
     };
 
     tracing::info!("server starting");
+
+    if let Err(err) = web::serve(&cfg.web).await {
+        tracing::error!("server: web server error: {err}");
+        std::process::exit(1);
+    }
 }

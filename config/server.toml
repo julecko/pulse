@@ -20,3 +20,13 @@ rotation = "daily"
 
 # Keep at most this many rotated log files, deleting the oldest (0 = keep all).
 keep_files = 10
+
+[web]
+# Address the HTTPS listener binds to.
+bind = "0.0.0.0:8443"
+
+[web.tls]
+# Explicit cert/key paths. Leave unset: ./certs/{cert,key}.pem in debug,
+# /etc/pulse/certs/{cert,key}.pem in release.
+# cert = "/etc/pulse/certs/cert.pem"
+# key = "/etc/pulse/certs/key.pem"
