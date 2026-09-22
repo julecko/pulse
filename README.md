@@ -90,7 +90,7 @@ in the repo root — pass `--source` or `cd crates/server` first.
 export DATABASE_URL="sqlite://$(pwd)/data/server.db"
 
 # add a new reversible migration
-sqlx migrate add -r --source crates/server/migrations <name>
+sqlx migrate add -r -s --source crates/server/migrations <name>
 
 # apply pending migrations manually
 sqlx migrate run --source crates/server/migrations
