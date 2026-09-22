@@ -4,7 +4,7 @@
 # /etc/pulse/agent.toml instead.
 
 # Domain or IP (with port) of the server to send metrics to.
-server_addr = "127.0.0.1:8080"
+server_addr = "127.0.0.1:8443"
 
 # How often to collect and send metrics, in seconds.
 interval_secs = 60
