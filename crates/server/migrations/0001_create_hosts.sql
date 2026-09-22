@@ -1,5 +1,0 @@
-CREATE TABLE hosts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    hostname TEXT NOT NULL UNIQUE,
-    last_seen TEXT NOT NULL
-);

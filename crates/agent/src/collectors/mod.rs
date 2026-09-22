@@ -9,6 +9,7 @@ pub use collector::{Collector, Context};
 
 use protocol::Metrics;
 
+// TODO Later remove HostCollector as it isnt often updated
 fn registry() -> Vec<Box<dyn Collector>> {
     let mut collectors: Vec<Box<dyn Collector>> = vec![
         Box::new(host::HostCollector),
