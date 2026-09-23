@@ -5,5 +5,6 @@ CREATE TABLE agents (
     os_name TEXT NOT NULL,
     os_version TEXT NOT NULL,
     kernel_version TEXT NOT NULL,
-    arch TEXT NOT NULL
+    arch TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
