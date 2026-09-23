@@ -9,6 +9,7 @@ strip = true
 members = [
     "crates/agent",
     "crates/server",
+    "crates/server-cli",
     "crates/protocol",
     "crates/pulse-shared",
 ]

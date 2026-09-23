@@ -6,6 +6,14 @@ use config::ServerConfig;
 
 #[tokio::main]
 async fn main() {
+    // The dependency graph pulls in both the `ring` and `aws-lc-rs` rustls
+    // crypto backends (via axum-server and reqwest respectively, sharing
+    // one workspace Cargo.lock); rustls refuses to guess between them, so
+    // pin one explicitly before any TLS work happens.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install default rustls crypto provider");
+
     let cfg: ServerConfig = pulse_shared::config::load("server").unwrap_or_else(|err| {
         eprintln!("server: failed to load config: {err}");
         std::process::exit(1);

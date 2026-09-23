@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Metrics {
-    pub host: Option<HostInfo>,
     pub cpu: Option<CpuInfo>,
     pub memory: Option<MemoryInfo>,
     pub disks: Vec<DiskInfo>,

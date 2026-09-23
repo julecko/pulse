@@ -1,3 +1,5 @@
+mod agents;
+mod auth;
 mod routes;
 
 use std::net::SocketAddr;
@@ -63,7 +65,7 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
     tracing::info!(bind = %cfg.bind, cert = %cert.display(), key = %key.display(), "web server listening");
 
     axum_server::bind_rustls(cfg.bind, tls)
-        .serve(routes::router(pool).into_make_service())
+        .serve(routes::router(pool).into_make_service_with_connect_info::<SocketAddr>())
         .await
         .map_err(|e| WebError::Serve(cfg.bind, e))
 }

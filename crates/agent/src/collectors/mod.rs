@@ -1,7 +1,6 @@
 mod collector;
 mod cpu;
 mod disk;
-mod host;
 mod linux;
 mod memory;
 
@@ -9,10 +8,8 @@ pub use collector::{Collector, Context};
 
 use protocol::Metrics;
 
-// TODO Later remove HostCollector as it isnt often updated
 fn registry() -> Vec<Box<dyn Collector>> {
     let mut collectors: Vec<Box<dyn Collector>> = vec![
-        Box::new(host::HostCollector),
         Box::new(cpu::CpuCollector),
         Box::new(memory::MemoryCollector),
         Box::new(disk::DiskCollector),
