@@ -160,6 +160,27 @@ pub async fn revoke(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Deletes an agent entirely (not just revokes it) — since its fingerprint
+/// is then gone from the table, a re-pair with the same (or a new)
+/// fingerprint starts over as a fresh `pending` request. Cascades to its
+/// `root_notifications`/`metrics` rows via the FK constraints.
+pub async fn remove(
+    State(pool): State<SqlitePool>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let result = sqlx::query("DELETE FROM agents WHERE id = ?")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Example protected route: proves [`AuthedAgent`] works end-to-end by
 /// returning the calling agent's own row.
 pub async fn me(

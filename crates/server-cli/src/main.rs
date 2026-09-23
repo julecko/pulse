@@ -33,6 +33,8 @@ enum AgentsCommand {
     Approve { id: i64 },
     /// Revoke an agent's access
     Revoke { id: i64 },
+    /// Delete an agent entirely, so it can pair again as a fresh request
+    Remove { id: i64 },
 }
 
 #[tokio::main]
@@ -61,6 +63,7 @@ async fn main() {
             AgentsCommand::List => list_agents(&client, &base).await,
             AgentsCommand::Approve { id } => approve(&client, &base, id).await,
             AgentsCommand::Revoke { id } => revoke(&client, &base, id).await,
+            AgentsCommand::Remove { id } => remove(&client, &base, id).await,
         },
     };
 
@@ -142,5 +145,18 @@ async fn revoke(client: &reqwest::Client, base: &str, id: i64) -> Result<(), Str
         .map_err(|e| format!("server error: {e}"))?;
 
     println!("revoked agent {id}");
+    Ok(())
+}
+
+async fn remove(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
+    client
+        .delete(format!("{base}/agents/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("server error: {e}"))?;
+
+    println!("removed agent {id}");
     Ok(())
 }
