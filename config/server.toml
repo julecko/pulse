@@ -6,7 +6,7 @@
 [log]
 # error | warn | info | debug | trace, or any RUST_LOG-style filter string.
 # RUST_LOG, if set, overrides this.
-level = "info"
+level = "warn,server=debug"
 
 # Explicit log file path. Leave unset: stdout in debug, /var/log/pulse/server.log
 # in release.

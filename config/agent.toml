@@ -12,7 +12,7 @@ interval_secs = 60
 [log]
 # error | warn | info | debug | trace, or any RUST_LOG-style filter string.
 # RUST_LOG, if set, overrides this.
-level = "info"
+level = "warn,agent=debug"
 
 # Explicit log file path. Leave unset: stdout in debug, /var/log/pulse/agent.log
 # in release.
