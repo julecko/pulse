@@ -128,7 +128,8 @@ Both binaries load TOML config on startup via `pulse_shared::config::load`:
 Any field not present in the file falls back to its default (see each
 `config.rs` for the defaults). Notable settings:
 
-- `config/server.toml`: `[web] bind`, `[web.tls] cert/key`, `[db] path`, `[log] ...`
+- `config/server.toml`: `[web] bind`, `[web.tls] cert/key`, `[db] path`,
+  `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever), `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and

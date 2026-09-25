@@ -34,6 +34,11 @@ async fn main() {
         std::process::exit(1);
     });
 
+    tokio::spawn(db::retention::cleanup_periodically(
+        pool.clone(),
+        cfg.retention.clone(),
+    ));
+
     if let Err(err) = web::serve(&cfg.web, pool).await {
         tracing::error!("server: web server error: {err}");
         std::process::exit(1);

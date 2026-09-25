@@ -10,6 +10,8 @@
 //! binary at compile time, so they apply on startup regardless of cwd. Add a
 //! new one with `sqlx migrate add <name>` (run from `crates/server`).
 
+pub mod retention;
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};

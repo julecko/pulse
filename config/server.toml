@@ -35,3 +35,9 @@ bind = "0.0.0.0:8443"
 # Explicit SQLite database file. Leave unset: ./data/server.db in debug,
 # /var/lib/pulse/server.db in release.
 # path = "/var/lib/pulse/server.db"
+
+[retention]
+# How many days of rows to keep; older rows are deleted on startup and then
+# hourly. 0 keeps rows forever.
+metrics_days = 14
+auth_events_days = 14
