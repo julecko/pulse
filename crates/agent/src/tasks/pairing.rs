@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use protocol::{PairRequest, PairResponse};
+use tokio::sync::watch;
 
 use crate::identity::{self, Identity};
 
@@ -13,8 +14,14 @@ const PAIRING_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// previously-approved agent can be revoked or removed server-side at any
 /// time. Once approval-gated features (e.g. sending metrics) exist, they
 /// should check the current state this loop maintains rather than just
-/// "is there a token".
-pub async fn pairing_loop(client: reqwest::Client, url: String, mut identity: Identity) {
+/// "is there a token". The current token is published on `token_tx` for
+/// those tasks.
+pub async fn pairing_loop(
+    client: reqwest::Client,
+    url: String,
+    mut identity: Identity,
+    token_tx: watch::Sender<Option<String>>,
+) {
     let mut ticker = tokio::time::interval(PAIRING_POLL_INTERVAL);
     loop {
         ticker.tick().await;
@@ -70,5 +77,13 @@ pub async fn pairing_loop(client: reqwest::Client, url: String, mut identity: Id
                 tracing::warn!(%err, %status, "failed to parse pairing response");
             }
         }
+
+        token_tx.send_if_modified(|current| {
+            if *current == identity.token {
+                return false;
+            }
+            current.clone_from(&identity.token);
+            true
+        });
     }
 }

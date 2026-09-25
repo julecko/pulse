@@ -32,4 +32,6 @@ pub enum AgentsCommand {
     Revoke { id: i64 },
     /// Delete an agent entirely, so it can pair again as a fresh request
     Remove { id: i64 },
+    /// Show an agent's most recent PAM events (logins, sudo, failed auth)
+    Events { id: i64 },
 }

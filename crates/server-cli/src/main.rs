@@ -1,4 +1,5 @@
-//! Admin CLI for the Pulse server: list/approve/revoke/remove agents, check health.
+//! Admin CLI for the Pulse server: list/approve/revoke/remove agents, view
+//! their PAM events, check health.
 
 mod cli;
 mod commands;
@@ -33,6 +34,7 @@ async fn main() {
             AgentsCommand::Approve { id } => commands::agents::approve(&client, &base, id).await,
             AgentsCommand::Revoke { id } => commands::agents::revoke(&client, &base, id).await,
             AgentsCommand::Remove { id } => commands::agents::remove(&client, &base, id).await,
+            AgentsCommand::Events { id } => commands::agents::events(&client, &base, id).await,
         },
     };
 

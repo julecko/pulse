@@ -1,4 +1,4 @@
-use protocol::{AgentSummary, ApproveResponse};
+use protocol::{AgentSummary, ApproveResponse, AuthEventRecord};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -69,5 +69,41 @@ pub async fn remove(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
         .map_err(|e| format!("server error: {e}"))?;
 
     println!("removed agent {id}");
+    Ok(())
+}
+
+pub async fn events(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
+    let events: Vec<AuthEventRecord> = client
+        .get(format!("{base}/agents/{id}/auth-events"))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("server error: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {e}"))?;
+
+    if events.is_empty() {
+        println!("no events");
+        return Ok(());
+    }
+
+    println!(
+        "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10}",
+        "OCCURRED_AT", "KIND", "SERVICE", "USER", "RUSER", "RHOST", "TTY"
+    );
+    for event in events {
+        println!(
+            "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10}",
+            event.occurred_at,
+            event.kind,
+            event.service,
+            event.user,
+            event.ruser.as_deref().unwrap_or("-"),
+            event.rhost.as_deref().unwrap_or("-"),
+            event.tty.as_deref().unwrap_or("-"),
+        );
+    }
     Ok(())
 }

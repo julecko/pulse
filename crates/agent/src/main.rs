@@ -1,13 +1,21 @@
 mod collectors;
 mod config;
 mod identity;
+mod pam_hook;
 mod tasks;
 
 use config::AgentConfig;
-use tasks::{check_health_periodically, pairing_loop};
+use tasks::{auth_events_loop, check_health_periodically, pairing_loop};
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() {
+    // Invoked by pam_exec, not as the daemon: report one event and exit.
+    if std::env::args().nth(1).as_deref() == Some("pam-hook") {
+        pam_hook::run();
+        return;
+    }
+
     // See crates/server/src/main.rs for why this is needed: the shared
     // workspace Cargo.lock pulls in two rustls crypto backends, so pin one
     // explicitly before any TLS work happens.
@@ -50,11 +58,22 @@ async fn main() {
 
     let health_url = format!("https://{}/healthz", cfg.server_addr);
     let pair_url = format!("https://{}/agents/pair", cfg.server_addr);
+    let auth_events_url = format!("https://{}/agents/me/auth-events", cfg.server_addr);
+
+    // Tasks that call authenticated endpoints read the current token from
+    // here; pairing_loop keeps it up to date.
+    let (token_tx, token_rx) = watch::channel(identity.token.clone());
 
     // Runs for the agent's whole lifetime, whether or not a token is
     // already stored — see tasks::pairing_loop for why.
     let health_check = tokio::spawn(check_health_periodically(client.clone(), health_url));
-    let pairing = tokio::spawn(pairing_loop(client, pair_url, identity));
+    let auth_events = tokio::spawn(auth_events_loop(
+        client.clone(),
+        auth_events_url,
+        cfg.pam_socket_path(),
+        token_rx,
+    ));
+    let pairing = tokio::spawn(pairing_loop(client, pair_url, identity, token_tx));
 
-    let _ = tokio::join!(health_check, pairing);
+    let _ = tokio::join!(health_check, auth_events, pairing);
 }

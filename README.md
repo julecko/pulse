@@ -129,11 +129,59 @@ Any field not present in the file falls back to its default (see each
 `config.rs` for the defaults). Notable settings:
 
 - `config/server.toml`: `[web] bind`, `[web.tls] cert/key`, `[db] path`, `[log] ...`
-- `config/agent.toml`: `server_addr`, `interval_secs`, `[log] ...`
+- `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
 to `/var/log/pulse/<app>.log` in release builds. `RUST_LOG` overrides
 `log.level` when set.
+
+## Tracking logins (PAM)
+
+The agent can report SSH logins, `sudo`/`su` sessions and failed password
+attempts. PAM calls `agent pam-hook` through `pam_exec.so`. The hook writes
+the event to the agent's local Unix socket (`pam_socket`: `data/agent.sock`
+in debug, `/run/pulse/agent.sock` in release) and exits. The agent then
+forwards events to the server with its bearer token
+(`POST /agents/me/auth-events`), so the server links each event to its host
+from the token. The hook never sees the token.
+
+The socket only accepts events from root (which pam_exec runs as for
+sshd/sudo/su) or from the agent's own user, so other local users can't
+forge events. The agent keeps no history: each event is sent on its own as
+it arrives. If the agent isn't approved, or the server can't be reached,
+the event is dropped.
+
+Nothing is installed automatically. Add these lines by hand (paths assume
+the agent binary is at `/usr/local/bin/pulse-agent`):
+
+**Sessions**: add to `/etc/pam.d/sshd`, `/etc/pam.d/sudo`, `/etc/pam.d/su`:
+
+```
+session optional pam_exec.so quiet /usr/local/bin/pulse-agent pam-hook
+```
+
+**Failed authentication** (Debian/Ubuntu `/etc/pam.d/common-auth`): put the
+hook between `pam_unix` and `pam_deny`, and bump `success=1` to `success=2`
+so a successful login skips both:
+
+```
+auth [success=2 default=ignore] pam_unix.so nullok
+auth optional pam_exec.so quiet /usr/local/bin/pulse-agent pam-hook
+auth requisite pam_deny.so
+```
+
+Keep a root shell open while editing PAM files, so a mistake can't lock you
+out. The hook always exits 0 and the lines are `optional`, so a stopped or
+broken agent never blocks a login.
+
+Caveats:
+- The `success=N` skip counts differ between distros. Check your own
+  `common-auth` / `system-auth` before copying the snippet.
+- Failed SSH **public-key** attempts are handled by sshd without going
+  through PAM auth, so they aren't reported. Successful key logins are still
+  reported as sessions.
+
+View an agent's events with `server-cli agents events <id>`.
 
 ## Development
 

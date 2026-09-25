@@ -1,5 +1,6 @@
 mod agents;
 mod auth;
+mod auth_events;
 mod routes;
 
 use std::net::SocketAddr;
