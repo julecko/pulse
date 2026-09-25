@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -20,6 +22,17 @@ pub enum Command {
         #[command(subcommand)]
         command: AgentsCommand,
     },
+    /// Manage user accounts. Opens the server's SQLite file directly
+    /// (no HTTP), so it must run on the server host with write access to it.
+    Users {
+        /// Server database file. Default: `[db] path` from the server
+        /// config, else the server's default location.
+        #[arg(long)]
+        db: Option<PathBuf>,
+
+        #[command(subcommand)]
+        command: UsersCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -34,4 +47,14 @@ pub enum AgentsCommand {
     Remove { id: i64 },
     /// Show an agent's most recent PAM events (logins, sudo, failed auth)
     Events { id: i64 },
+}
+
+#[derive(Subcommand)]
+pub enum UsersCommand {
+    /// Create a user; prompts for the password (or reads one line from stdin)
+    Add { username: String },
+    /// Delete a user, ending all their sessions
+    Remove { username: String },
+    /// List users and their active session counts
+    List,
 }

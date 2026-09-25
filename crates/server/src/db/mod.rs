@@ -1,10 +1,5 @@
-//! SQLite storage.
-//!
-//! Where the database file lives, absent an explicit config override:
-//! - debug build: `./data/server.db`, relative to cwd (the repo root
-//!   when run via `cargo run` from the workspace root)
-//! - release build: `DEFAULT_DATA_DIR/server.db`, matching
-//!   `StateDirectory=pulse` in the systemd unit
+//! SQLite storage. Where the database file lives is decided by
+//! [`pulse_shared::db::DbConfig`], shared with `server-cli users`.
 //!
 //! Migrations live in `crates/server/migrations/` and are embedded into the
 //! binary at compile time, so they apply on startup regardless of cwd. Add a
@@ -12,20 +7,10 @@
 
 pub mod retention;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+pub use pulse_shared::db::DbConfig;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-
-/// Release default data dir; matches `StateDirectory=pulse` in the systemd unit.
-pub const DEFAULT_DATA_DIR: &str = "/var/lib/pulse";
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DbConfig {
-    /// Explicit database file. Unset: `<data dir>/server.db`.
-    pub path: Option<PathBuf>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -37,19 +22,8 @@ pub enum DbError {
     Migrate(#[from] sqlx::migrate::MigrateError),
 }
 
-fn data_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        Path::new("data").to_path_buf()
-    } else {
-        PathBuf::from(DEFAULT_DATA_DIR)
-    }
-}
-
 pub async fn connect(cfg: &DbConfig) -> Result<SqlitePool, DbError> {
-    let path = cfg
-        .path
-        .clone()
-        .unwrap_or_else(|| data_dir().join("server.db"));
+    let path = cfg.resolved_path();
 
     if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| DbError::CreateDir(dir.to_path_buf(), e))?;

@@ -1,6 +1,7 @@
 //! User login/logout and an example route protected by
 //! [`super::auth::require_user`]. There's deliberately no registration
-//! route: users are created with `server user add` (see `crate::user_cli`).
+//! route: users are created with `server-cli users add`, which writes to
+//! the database directly.
 
 use axum::extract::State;
 use axum::http::StatusCode;

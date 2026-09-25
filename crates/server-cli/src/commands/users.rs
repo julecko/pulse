@@ -1,36 +1,85 @@
-//! `server user ...`: the only way to create or remove user accounts.
+//! `server-cli users ...`: the only way to create or remove user accounts.
 //!
-//! There's no HTTP route for this on purpose. Running it requires the same
-//! access as the server itself (its config and the SQLite file), so only
-//! someone with root / service-user access on the server host can manage
-//! users. Passwords are never taken as arguments (they'd end up in shell
-//! history and `ps`): they're prompted for on a terminal, or read as one
-//! line from stdin when piped.
+//! Unlike the other commands this doesn't go through the server's HTTP API
+//! (there's deliberately no route that creates users): it opens the
+//! server's SQLite file directly, so it only works for someone with write
+//! access to that file on the server host (root / the service user).
+//! Passwords are never taken as arguments (they'd end up in shell history
+//! and `ps`): they're prompted for on a terminal, or read as one line from
+//! stdin when piped.
 
 use std::io::{BufRead, IsTerminal};
+use std::path::{Path, PathBuf};
 
+use pulse_shared::db::DbConfig;
+use pulse_shared::password;
+use serde::Deserialize;
 use sqlx::SqlitePool;
-
-use crate::credentials;
-
-const USAGE: &str = "usage: server user add <username>
-       server user remove <username>
-       server user list";
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 const MIN_PASSWORD_LEN: usize = 8;
 const MAX_USERNAME_LEN: usize = 64;
 
-pub async fn run(args: &[String], pool: &SqlitePool) -> Result<(), String> {
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match args.as_slice() {
-        ["add", username] => add(pool, username).await,
-        ["remove", username] => remove(pool, username).await,
-        ["list"] => list(pool).await,
-        _ => Err(USAGE.to_string()),
-    }
+/// Just the `[db]` section of the server config; everything else in the
+/// file is ignored.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct ServerConfigDb {
+    db: DbConfig,
 }
 
-async fn add(pool: &SqlitePool, username: &str) -> Result<(), String> {
+/// Opens the server database: `--db` if given, else `[db] path` from the
+/// server config (same lookup as the server: `PULSE_CONFIG`, then
+/// `config/server.toml` in debug / `/etc/pulse/server.toml` in release),
+/// else the server's default location. Never creates the file or runs
+/// migrations — that's the server's job.
+pub async fn open(db: Option<PathBuf>) -> Result<SqlitePool, String> {
+    let path = match db {
+        Some(path) => path,
+        None => pulse_shared::config::load::<ServerConfigDb>("server")
+            .map_err(|e| e.to_string())?
+            .db
+            .resolved_path(),
+    };
+
+    if !path.exists() {
+        return Err(format!(
+            "no database at {}; start the server once to create it, or pass --db",
+            path.display()
+        ));
+    }
+
+    let pool = connect(&path)
+        .await
+        .map_err(|e| format!("opening database {}: {e}", path.display()))?;
+
+    let has_users: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users')",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if !has_users {
+        return Err(format!(
+            "{} has no users table; start the server once so it applies its migrations",
+            path.display()
+        ));
+    }
+
+    Ok(pool)
+}
+
+async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false);
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+}
+
+pub async fn add(pool: &SqlitePool, username: &str) -> Result<(), String> {
     validate_username(username)?;
 
     let password = read_password()?;
@@ -40,8 +89,7 @@ async fn add(pool: &SqlitePool, username: &str) -> Result<(), String> {
         ));
     }
 
-    let hash =
-        credentials::hash_password(&password).map_err(|e| format!("hashing password: {e}"))?;
+    let hash = password::hash_password(&password).map_err(|e| format!("hashing password: {e}"))?;
 
     sqlx::query("INSERT INTO users (username, password_hash) VALUES (?, ?)")
         .bind(username)
@@ -59,7 +107,7 @@ async fn add(pool: &SqlitePool, username: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn remove(pool: &SqlitePool, username: &str) -> Result<(), String> {
+pub async fn remove(pool: &SqlitePool, username: &str) -> Result<(), String> {
     // Sessions go with it via ON DELETE CASCADE, logging the user out everywhere.
     let result = sqlx::query("DELETE FROM users WHERE username = ?")
         .bind(username)
@@ -75,7 +123,7 @@ async fn remove(pool: &SqlitePool, username: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn list(pool: &SqlitePool) -> Result<(), String> {
+pub async fn list(pool: &SqlitePool) -> Result<(), String> {
     let users: Vec<(i64, String, String, i64)> = sqlx::query_as(
         "SELECT u.id, u.username, u.created_at,
                 (SELECT COUNT(*) FROM user_sessions s

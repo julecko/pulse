@@ -3,7 +3,13 @@ name = "pulse-shared"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# argon2 password hashing (`pulse_shared::password`); server + server-cli only.
+password = ["dep:argon2", "dep:password-hash"]
+
 [dependencies]
+argon2 = { version = "0.5", optional = true }
+password-hash = { version = "0.5", features = ["getrandom"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

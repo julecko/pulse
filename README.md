@@ -186,16 +186,24 @@ View an agent's events with `server-cli agents events <id>`.
 
 ## Users
 
-User accounts can only be created from the server host, with the `server`
-binary. There is no registration endpoint. Managing users needs the same
-access as the server itself (its config and SQLite file):
+User accounts can only be created with `server-cli users`. There is no
+registration endpoint and no HTTP route that creates users. Unlike the other
+`server-cli` commands, `users` doesn't talk to the server's API. It opens the
+server's SQLite file directly, so it only works on the server host for someone
+with write access to that file (root or the service user):
 
 ```sh
-cargo run -p server -- user add alice      # prompts for the password twice
-echo "$PASSWORD" | server user add alice   # or read it from stdin (scripts)
-cargo run -p server -- user list
-cargo run -p server -- user remove alice   # also ends all of alice's sessions
+cargo run -p server-cli -- users add alice      # prompts for the password twice
+echo "$PASSWORD" | server-cli users add alice   # or read it from stdin (scripts)
+cargo run -p server-cli -- users list
+cargo run -p server-cli -- users remove alice   # also ends all of alice's sessions
 ```
+
+The database is found the same way the server finds it: `[db] path` from the
+server config (`PULSE_CONFIG`, else `config/server.toml` in debug or
+`/etc/pulse/server.toml` in release), else the default location. Override it
+with `--db <path>`. The server must have run once so the database and its
+tables exist; `server-cli` never creates the database or runs migrations.
 
 Passwords are never accepted as command-line arguments, so they don't end up
 in shell history or `ps`. They must be at least 8 characters and are stored as

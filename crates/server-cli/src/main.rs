@@ -1,11 +1,12 @@
 //! Admin CLI for the Pulse server: list/approve/revoke/remove agents, view
-//! their PAM events, check health.
+//! their PAM events, check health, and manage user accounts (the latter
+//! directly in the server's database).
 
 mod cli;
 mod commands;
 
 use clap::Parser;
-use cli::{AgentsCommand, Cli, Command};
+use cli::{AgentsCommand, Cli, Command, UsersCommand};
 
 #[tokio::main]
 async fn main() {
@@ -35,6 +36,16 @@ async fn main() {
             AgentsCommand::Revoke { id } => commands::agents::revoke(&client, &base, id).await,
             AgentsCommand::Remove { id } => commands::agents::remove(&client, &base, id).await,
             AgentsCommand::Events { id } => commands::agents::events(&client, &base, id).await,
+        },
+        Command::Users { db, command } => match commands::users::open(db).await {
+            Ok(pool) => match command {
+                UsersCommand::Add { username } => commands::users::add(&pool, &username).await,
+                UsersCommand::Remove { username } => {
+                    commands::users::remove(&pool, &username).await
+                }
+                UsersCommand::List => commands::users::list(&pool).await,
+            },
+            Err(err) => Err(err),
         },
     };
 

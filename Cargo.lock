@@ -1403,6 +1403,8 @@ dependencies = [
 name = "pulse-shared"
 version = "0.1.0"
 dependencies = [
+ "argon2",
+ "password-hash",
  "serde",
  "thiserror",
  "toml 1.1.6+spec-1.1.0",
@@ -1816,13 +1818,11 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
- "argon2",
  "axum",
  "axum-server",
  "password-hash",
  "protocol",
  "pulse-shared",
- "rpassword",
  "rustls",
  "serde",
  "sha2",
@@ -1839,8 +1839,12 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "protocol",
+ "pulse-shared",
  "reqwest",
+ "rpassword",
  "rustls",
+ "serde",
+ "sqlx",
  "tokio",
 ]
 
