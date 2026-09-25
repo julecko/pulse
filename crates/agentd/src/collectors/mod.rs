@@ -21,13 +21,14 @@ fn registry() -> Vec<Box<dyn Collector>> {
     collectors
 }
 
-pub fn collect() -> Metrics {
-    let mut ctx = Context::new();
+/// Takes one snapshot. Reuse the same `ctx` between calls: CPU usage is
+/// averaged over the time since the previous call.
+pub fn collect(ctx: &mut Context) -> Metrics {
     let mut metrics = Metrics::default();
 
     for collector in registry().iter_mut() {
         let name = collector.name();
-        match collector.collect_into(&mut ctx, &mut metrics) {
+        match collector.collect_into(ctx, &mut metrics) {
             Ok(()) => tracing::debug!(collector = name, "collected"),
             Err(err) => tracing::warn!(collector = name, %err, "collector failed"),
         }

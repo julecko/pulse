@@ -10,7 +10,7 @@ use protocol::{AgentSummary, ApproveResponse, PairRequest, PairResponse};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use super::auth::AuthedAgent;
+use super::auth::{AuthedAgent, AuthedUser};
 
 #[derive(sqlx::FromRow)]
 struct AgentRow {
@@ -125,6 +125,7 @@ pub async fn list(
 
 pub async fn approve(
     State(pool): State<SqlitePool>,
+    Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
 ) -> Result<Json<ApproveResponse>, (StatusCode, String)> {
     let token = Uuid::new_v4().simple().to_string();
@@ -140,11 +141,14 @@ pub async fn approve(
         return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
     }
 
+    tracing::info!(agent_id = id, by = %user.username, "agent approved");
+
     Ok(Json(ApproveResponse { token }))
 }
 
 pub async fn revoke(
     State(pool): State<SqlitePool>,
+    Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let result = sqlx::query("UPDATE agents SET status = 'revoked', token = NULL WHERE id = ?")
@@ -157,6 +161,8 @@ pub async fn revoke(
         return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
     }
 
+    tracing::info!(agent_id = id, by = %user.username, "agent revoked");
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -166,6 +172,7 @@ pub async fn revoke(
 /// `root_notifications`/`metrics` rows via the FK constraints.
 pub async fn remove(
     State(pool): State<SqlitePool>,
+    Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let result = sqlx::query("DELETE FROM agents WHERE id = ?")
@@ -177,6 +184,8 @@ pub async fn remove(
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
     }
+
+    tracing::info!(agent_id = id, by = %user.username, "agent removed");
 
     Ok(StatusCode::NO_CONTENT)
 }

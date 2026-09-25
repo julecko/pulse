@@ -4,11 +4,9 @@
 //! (there's deliberately no route that creates users): it opens the
 //! server's SQLite file directly, so it only works for someone with write
 //! access to that file on the server host (root / the service user).
-//! Passwords are never taken as arguments (they'd end up in shell history
-//! and `ps`): they're prompted for on a terminal, or read as one line from
-//! stdin when piped.
+//! Passwords are read with [`crate::prompt::password`], never taken as
+//! arguments.
 
-use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 
 use pulse_shared::db::DbConfig;
@@ -16,6 +14,8 @@ use pulse_shared::password;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+use crate::prompt;
 
 const MIN_PASSWORD_LEN: usize = 8;
 const MAX_USERNAME_LEN: usize = 64;
@@ -164,20 +164,12 @@ fn validate_username(username: &str) -> Result<(), String> {
     }
 }
 
+/// New password; typed twice on a terminal to catch typos, one stdin line
+/// when piped.
 fn read_password() -> Result<String, String> {
-    if std::io::stdin().is_terminal() {
-        let password = rpassword::prompt_password("Password: ").map_err(|e| e.to_string())?;
-        let confirm = rpassword::prompt_password("Repeat password: ").map_err(|e| e.to_string())?;
-        if password != confirm {
-            return Err("passwords do not match".to_string());
-        }
-        Ok(password)
-    } else {
-        let mut line = String::new();
-        std::io::stdin()
-            .lock()
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
-        Ok(line.trim_end_matches(['\r', '\n']).to_string())
+    let password = prompt::password("Password: ")?;
+    if prompt::stdin_is_terminal() && prompt::password("Repeat password: ")? != password {
+        return Err("passwords do not match".to_string());
     }
+    Ok(password)
 }

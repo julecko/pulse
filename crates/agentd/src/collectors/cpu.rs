@@ -1,6 +1,4 @@
 use std::error::Error;
-use std::thread;
-use std::time::Duration;
 
 use protocol::{CpuInfo, Metrics};
 
@@ -18,9 +16,9 @@ impl Collector for CpuCollector {
         ctx: &mut Context,
         metrics: &mut Metrics,
     ) -> Result<(), Box<dyn Error>> {
-        // CPU usage is a delta between two samples.
-        ctx.sys.refresh_cpu_usage();
-        thread::sleep(Duration::from_millis(200));
+        // sysinfo reports usage since the previous refresh, and `ctx` lives
+        // across collections, so this is the average over the whole interval
+        // since the last snapshot (or since `Context::new` for the first).
         ctx.sys.refresh_cpu_usage();
 
         let per_core: Vec<f32> = ctx.sys.cpus().iter().map(|c| c.cpu_usage()).collect();

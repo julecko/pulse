@@ -12,9 +12,9 @@ pulse-agent is installed but not started. To finish setting it up:
        sudoedit /etc/pulse-agent/agent.toml
   2. Start the agent and enable it at boot:
        sudo systemctl enable --now pulse-agentd
-  3. Approve it on the server:
-       pulse-server-cli agents list
-       pulse-server-cli agents approve <id>
+  3. Approve it on the server (logs in as a Pulse user):
+       pulse-server-cli -u <user> agents list
+       pulse-server-cli -u <user> agents approve <id>
 
 MSG
 fi

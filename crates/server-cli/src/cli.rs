@@ -9,6 +9,12 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "127.0.0.1:8443")]
     pub server: String,
 
+    /// User to log in as for `agents` commands (prompted for if omitted).
+    /// The password is always prompted for without echo, or read from
+    /// stdin when piped.
+    #[arg(long, short = 'u', global = true)]
+    pub user: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -17,7 +23,7 @@ pub struct Cli {
 pub enum Command {
     /// Check server health (GET /healthz)
     Health,
-    /// Manage agents
+    /// Manage agents (logs in first; see --user)
     Agents {
         #[command(subcommand)]
         command: AgentsCommand,

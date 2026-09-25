@@ -1,12 +1,16 @@
-//! Admin CLI for the Pulse server: list/approve/revoke/remove agents, view
-//! their PAM events, check health, and manage user accounts (the latter
-//! directly in the server's database).
+//! Admin CLI for the Pulse server: list/approve/revoke/remove agents and
+//! view their PAM events and metrics (as a logged-in user), check health,
+//! and manage user accounts (directly in the server's database).
 
 mod cli;
 mod commands;
+mod prompt;
+mod session;
 
 use clap::Parser;
 use cli::{AgentsCommand, Cli, Command, UsersCommand};
+use reqwest::header::HeaderMap;
+use session::Session;
 
 #[tokio::main]
 async fn main() {
@@ -19,26 +23,19 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Talks to the server's self-signed dev cert; there's no CA trust
-    // distribution yet, same as the agent binary.
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("failed to build HTTP client");
-
     let base = format!("https://{}", cli.server);
 
     let result = match cli.command {
-        Command::Health => commands::health::check(&client, &base).await,
-        Command::Agents { command } => match command {
-            AgentsCommand::List => commands::agents::list(&client, &base).await,
-            AgentsCommand::Approve { id } => commands::agents::approve(&client, &base, id).await,
-            AgentsCommand::Revoke { id } => commands::agents::revoke(&client, &base, id).await,
-            AgentsCommand::Remove { id } => commands::agents::remove(&client, &base, id).await,
-            AgentsCommand::Events { id } => commands::agents::events(&client, &base, id).await,
-            AgentsCommand::Metrics { id, limit } => {
-                commands::agents::metrics(&client, &base, id, limit).await
+        Command::Health => {
+            commands::health::check(&session::http_client(HeaderMap::new()), &base).await
+        }
+        Command::Agents { command } => match Session::login(&base, cli.user).await {
+            Ok(session) => {
+                let result = run_agents(session.client(), &base, command).await;
+                session.logout().await;
+                result
             }
+            Err(err) => Err(err),
         },
         Command::Users { db, command } => match commands::users::open(db).await {
             Ok(pool) => match command {
@@ -55,5 +52,22 @@ async fn main() {
     if let Err(err) = result {
         eprintln!("pulse-server-cli: {err}");
         std::process::exit(1);
+    }
+}
+
+async fn run_agents(
+    client: &reqwest::Client,
+    base: &str,
+    command: AgentsCommand,
+) -> Result<(), String> {
+    match command {
+        AgentsCommand::List => commands::agents::list(client, base).await,
+        AgentsCommand::Approve { id } => commands::agents::approve(client, base, id).await,
+        AgentsCommand::Revoke { id } => commands::agents::revoke(client, base, id).await,
+        AgentsCommand::Remove { id } => commands::agents::remove(client, base, id).await,
+        AgentsCommand::Events { id } => commands::agents::events(client, base, id).await,
+        AgentsCommand::Metrics { id, limit } => {
+            commands::agents::metrics(client, base, id, limit).await
+        }
     }
 }

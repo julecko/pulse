@@ -186,11 +186,13 @@ After installing:
 sudoedit /etc/pulse-agent/agent.toml          # server_addr = "your-server:8443"
 sudo systemctl enable --now pulse-agentd
 
-# on the server host: approve agents, create users
-pulse-server-cli agents list
-pulse-server-cli agents approve <id>
-pulse-server-cli agents metrics <id>          # latest snapshots (--limit N)
-sudo pulse-server-cli users add alice         # needs write access to the DB
+# on the server host: create your admin user first (needs write access to the DB)
+sudo pulse-server-cli users add alice
+
+# then approve agents; `agents` commands log in and ask for the password
+pulse-server-cli -u alice agents list
+pulse-server-cli -u alice agents approve <id>
+pulse-server-cli -u alice agents metrics <id>  # latest snapshots (--limit N)
 ```
 
 To set up login tracking, see [Tracking logins (PAM)](#tracking-logins-pam).
@@ -246,7 +248,7 @@ Caveats:
   through PAM auth, so they aren't reported. Successful key logins are still
   reported as sessions.
 
-View an agent's events with `pulse-server-cli agents events <id>`.
+View an agent's events with `pulse-server-cli -u <user> agents events <id>`.
 
 ## Users
 
@@ -272,6 +274,26 @@ tables exist; `pulse-server-cli` never creates the database or runs migrations.
 Passwords are never accepted as command-line arguments, so they don't end up
 in shell history or `ps`. They must be at least 8 characters and are stored as
 argon2id hashes.
+
+### Logging in from `pulse-server-cli`
+
+Every server route except `/healthz`, `/auth/login` and the agents' own
+routes requires a logged-in user. That covers everything `pulse-server-cli
+agents` does (list, approve, revoke, remove, events, metrics). So each
+`agents` command logs in first:
+
+```sh
+pulse-server-cli -u alice agents list          # prompts for the password, no echo
+pulse-server-cli agents list                   # prompts for the username too
+echo "$PASSWORD" | pulse-server-cli -u alice agents list   # scripts: password on stdin
+```
+
+The password is typed without echo and never taken as an argument, so it
+doesn't show up in shell history or `ps`. Each run logs out when it's done,
+so it leaves no session behind. `health` and `users` don't log in: `health`
+is public, and `users` works on the database directly.
+
+### HTTP API
 
 Clients log in with `POST /auth/login` (`{"username": ..., "password": ...}`)
 and get back a session token. They send it as `Authorization: Bearer <token>`
