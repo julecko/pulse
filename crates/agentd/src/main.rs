@@ -7,7 +7,7 @@ mod tasks;
 use config::AgentConfig;
 use std::time::Duration;
 
-use tasks::{auth_events_loop, check_health_periodically, pairing_loop, send_metrics_periodically};
+use tasks::{auth_events_loop, pairing_loop, send_metrics_periodically};
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -64,7 +64,6 @@ async fn main() {
         .build()
         .expect("failed to build HTTP client");
 
-    let health_url = format!("https://{}/healthz", cfg.server_addr);
     let pair_url = format!("https://{}/agents/pair", cfg.server_addr);
     let auth_events_url = format!("https://{}/agents/me/auth-events", cfg.server_addr);
     let metrics_url = format!("https://{}/agents/me/metrics", cfg.server_addr);
@@ -73,9 +72,6 @@ async fn main() {
     // here; pairing_loop keeps it up to date.
     let (token_tx, token_rx) = watch::channel(identity.token.clone());
 
-    // Runs for the agent's whole lifetime, whether or not a token is
-    // already stored — see tasks::pairing_loop for why.
-    let health_check = tokio::spawn(check_health_periodically(client.clone(), health_url));
     let auth_events = tokio::spawn(auth_events_loop(
         client.clone(),
         auth_events_url,
@@ -88,7 +84,9 @@ async fn main() {
         Duration::from_secs(cfg.interval_secs),
         token_rx,
     ));
+    // Runs for the agent's whole lifetime, whether or not a token is
+    // already stored — see tasks::pairing_loop for why.
     let pairing = tokio::spawn(pairing_loop(client, pair_url, identity, token_tx));
 
-    let _ = tokio::join!(health_check, auth_events, metrics, pairing);
+    let _ = tokio::join!(auth_events, metrics, pairing);
 }

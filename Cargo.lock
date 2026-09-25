@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentd"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "protocol",
  "pulse-shared",
@@ -1394,14 +1394,14 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pulse-shared"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "password-hash",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "server-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "protocol",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "serverd"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "axum-server",

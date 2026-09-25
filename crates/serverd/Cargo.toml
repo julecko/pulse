@@ -1,6 +1,6 @@
 [package]
 name = "serverd"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Pulse monitoring server daemon"
 license-file = "../../LICENSE"
@@ -14,7 +14,7 @@ axum = "0.8.9"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 password-hash = { version = "0.5", features = ["getrandom"] }
 protocol = { path = "../protocol" }
-pulse-shared = { version = "0.1.0", path = "../pulse-shared", features = ["password"] }
+pulse-shared = { version = "1.0.0", path = "../pulse-shared", features = ["password"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
