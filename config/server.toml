@@ -25,6 +25,9 @@ keep_files = 10
 # Address the HTTPS listener binds to.
 bind = "0.0.0.0:8443"
 
+# How long a user session from POST /auth/login stays valid, in hours.
+session_ttl_hours = 168
+
 [web.tls]
 # Explicit cert/key paths. Leave unset: ./certs/{cert,key}.pem in debug,
 # /etc/pulse/certs/{cert,key}.pem in release.

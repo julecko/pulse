@@ -128,7 +128,7 @@ Both binaries load TOML config on startup via `pulse_shared::config::load`:
 Any field not present in the file falls back to its default (see each
 `config.rs` for the defaults). Notable settings:
 
-- `config/server.toml`: `[web] bind`, `[web.tls] cert/key`, `[db] path`,
+- `config/server.toml`: `[web] bind/session_ttl_hours`, `[web.tls] cert/key`, `[db] path`,
   `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever), `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
@@ -183,6 +183,30 @@ Caveats:
   reported as sessions.
 
 View an agent's events with `server-cli agents events <id>`.
+
+## Users
+
+User accounts can only be created from the server host, with the `server`
+binary. There is no registration endpoint. Managing users needs the same
+access as the server itself (its config and SQLite file):
+
+```sh
+cargo run -p server -- user add alice      # prompts for the password twice
+echo "$PASSWORD" | server user add alice   # or read it from stdin (scripts)
+cargo run -p server -- user list
+cargo run -p server -- user remove alice   # also ends all of alice's sessions
+```
+
+Passwords are never accepted as command-line arguments, so they don't end up
+in shell history or `ps`. They must be at least 8 characters and are stored as
+argon2id hashes.
+
+Clients log in with `POST /auth/login` (`{"username": ..., "password": ...}`)
+and get back a session token. They send it as `Authorization: Bearer <token>`
+to user routes such as `GET /users/me`, and `POST /auth/logout` ends the
+session. Only a SHA-256 hash of each token is stored. Sessions expire after
+`[web] session_ttl_hours` (default 168, one week), and expired ones are
+cleaned up hourly.
 
 ## Development
 

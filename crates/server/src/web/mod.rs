@@ -2,6 +2,7 @@ mod agents;
 mod auth;
 mod auth_events;
 mod routes;
+mod users;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,8 @@ pub const DEFAULT_CERT_DIR: &str = "/etc/pulse/certs";
 pub struct WebConfig {
     pub bind: SocketAddr,
     pub tls: TlsConfig,
+    /// How long a user session from `POST /auth/login` stays valid.
+    pub session_ttl_hours: u32,
 }
 
 impl Default for WebConfig {
@@ -25,6 +28,7 @@ impl Default for WebConfig {
         Self {
             bind: SocketAddr::from(([0, 0, 0, 0], 8443)),
             tls: TlsConfig::default(),
+            session_ttl_hours: 24 * 7,
         }
     }
 }
@@ -66,7 +70,10 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
     tracing::info!(bind = %cfg.bind, cert = %cert.display(), key = %key.display(), "web server listening");
 
     axum_server::bind_rustls(cfg.bind, tls)
-        .serve(routes::router(pool).into_make_service_with_connect_info::<SocketAddr>())
+        .serve(
+            routes::router(pool, cfg.session_ttl_hours)
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
         .await
         .map_err(|e| WebError::Serve(cfg.bind, e))
 }

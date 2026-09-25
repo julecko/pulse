@@ -1,7 +1,8 @@
 //! Periodic deletion of old rows, per `[retention]` in the server config.
 //!
 //! Runs once on startup and then every [`CLEANUP_INTERVAL`]. A retention of
-//! `0` days keeps that table's rows forever.
+//! `0` days keeps that table's rows forever. Expired user sessions are
+//! always deleted (they're already rejected by `require_user`).
 
 use std::time::Duration;
 
@@ -41,6 +42,7 @@ pub async fn cleanup_periodically(pool: SqlitePool, cfg: RetentionConfig) {
         // Table/column names are fixed here, never user input.
         delete_older_than(&pool, "metrics", "created_at", cfg.metrics_days).await;
         delete_older_than(&pool, "auth_events", "occurred_at", cfg.auth_events_days).await;
+        delete_expired_sessions(&pool).await;
     }
 }
 
@@ -65,5 +67,21 @@ async fn delete_older_than(pool: &SqlitePool, table: &str, column: &str, days: u
         }
         Ok(_) => {}
         Err(err) => tracing::warn!(%err, table, "retention cleanup failed"),
+    }
+}
+
+async fn delete_expired_sessions(pool: &SqlitePool) {
+    match sqlx::query("DELETE FROM user_sessions WHERE expires_at <= datetime('now')")
+        .execute(pool)
+        .await
+    {
+        Ok(result) if result.rows_affected() > 0 => {
+            tracing::info!(
+                deleted = result.rows_affected(),
+                "deleted expired user sessions"
+            );
+        }
+        Ok(_) => {}
+        Err(err) => tracing::warn!(%err, "expired session cleanup failed"),
     }
 }

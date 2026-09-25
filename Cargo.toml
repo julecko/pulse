@@ -5,6 +5,13 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Password hashing is unusably slow unoptimized (~1s per login in debug).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [workspace]
 members = [
     "crates/agent",
