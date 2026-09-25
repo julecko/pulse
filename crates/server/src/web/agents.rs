@@ -1,11 +1,11 @@
 //! Agent pairing: registration/polling, manual approval, revocation, and an
-//! example route protected by [`super::auth::AuthedAgent`].
+//! example route protected by [`super::auth::require_agent`].
 
 use std::net::SocketAddr;
 
-use axum::Json;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::StatusCode;
+use axum::{Extension, Json};
 use protocol::{AgentSummary, ApproveResponse, PairRequest, PairResponse};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -181,11 +181,11 @@ pub async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Example protected route: proves [`AuthedAgent`] works end-to-end by
+/// Example protected route: proves [`super::auth::require_agent`] works end-to-end by
 /// returning the calling agent's own row.
 pub async fn me(
     State(pool): State<SqlitePool>,
-    agent: AuthedAgent,
+    Extension(agent): Extension<AuthedAgent>,
 ) -> Result<Json<AgentSummary>, (StatusCode, String)> {
     let row: AgentSummaryRow = sqlx::query_as(
         "SELECT id, fingerprint, hostname, status, created_at FROM agents WHERE id = ?",
