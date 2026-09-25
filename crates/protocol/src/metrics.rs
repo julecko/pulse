@@ -8,6 +8,15 @@ pub struct Metrics {
     pub linux: Option<LinuxInfo>,
 }
 
+/// A stored snapshot, returned by `GET /agents/{id}/metrics`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MetricsRecord {
+    pub id: i64,
+    /// When the server received it (UTC, `YYYY-MM-DD HH:MM:SS`).
+    pub created_at: String,
+    pub metrics: Metrics,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HostInfo {
     pub hostname: String,

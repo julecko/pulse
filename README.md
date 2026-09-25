@@ -2,10 +2,10 @@
 
 Pulse is a lightweight host-monitoring system: a single **server** collects
 metrics (CPU, memory, disk, host info, ...) reported by one or more **agents**
-running on the machines you want to watch. Right now the agent only collects
-metrics locally and the server exposes a minimal HTTPS API backed by SQLite;
-the agent → server transport and a mobile app to view everything remotely are
-planned next.
+running on the machines you want to watch. Agents send a metrics snapshot every
+`interval_secs` (agent config) over HTTPS, and the server stores them in
+SQLite for `[retention] metrics_days`. A mobile app to view everything
+remotely is planned next.
 
 Workspace layout:
 
@@ -189,6 +189,7 @@ sudo systemctl enable --now pulse-agentd
 # on the server host: approve agents, create users
 pulse-server-cli agents list
 pulse-server-cli agents approve <id>
+pulse-server-cli agents metrics <id>          # latest snapshots (--limit N)
 sudo pulse-server-cli users add alice         # needs write access to the DB
 ```
 

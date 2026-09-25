@@ -1840,6 +1840,7 @@ dependencies = [
  "pulse-shared",
  "rustls",
  "serde",
+ "serde_json",
  "sha2",
  "sqlx",
  "thiserror",

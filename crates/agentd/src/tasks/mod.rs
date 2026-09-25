@@ -3,8 +3,10 @@
 
 mod auth_events;
 mod health;
+mod metrics;
 mod pairing;
 
 pub use auth_events::auth_events_loop;
 pub use health::check_health_periodically;
+pub use metrics::send_metrics_periodically;
 pub use pairing::pairing_loop;

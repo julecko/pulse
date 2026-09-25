@@ -5,7 +5,9 @@ mod pam_hook;
 mod tasks;
 
 use config::AgentConfig;
-use tasks::{auth_events_loop, check_health_periodically, pairing_loop};
+use std::time::Duration;
+
+use tasks::{auth_events_loop, check_health_periodically, pairing_loop, send_metrics_periodically};
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -27,6 +29,12 @@ async fn main() {
         eprintln!("pulse-agentd: failed to load config: {err}");
         std::process::exit(1);
     });
+
+    // A zero period would panic inside tokio's interval timer.
+    if cfg.interval_secs == 0 {
+        eprintln!("pulse-agentd: interval_secs must be at least 1");
+        std::process::exit(1);
+    }
 
     let _log_guard = match pulse_shared::init("agent", &cfg.log) {
         Ok(guard) => guard,
@@ -59,6 +67,7 @@ async fn main() {
     let health_url = format!("https://{}/healthz", cfg.server_addr);
     let pair_url = format!("https://{}/agents/pair", cfg.server_addr);
     let auth_events_url = format!("https://{}/agents/me/auth-events", cfg.server_addr);
+    let metrics_url = format!("https://{}/agents/me/metrics", cfg.server_addr);
 
     // Tasks that call authenticated endpoints read the current token from
     // here; pairing_loop keeps it up to date.
@@ -71,9 +80,15 @@ async fn main() {
         client.clone(),
         auth_events_url,
         cfg.pam_socket_path(),
+        token_rx.clone(),
+    ));
+    let metrics = tokio::spawn(send_metrics_periodically(
+        client.clone(),
+        metrics_url,
+        Duration::from_secs(cfg.interval_secs),
         token_rx,
     ));
     let pairing = tokio::spawn(pairing_loop(client, pair_url, identity, token_tx));
 
-    let _ = tokio::join!(health_check, auth_events, pairing);
+    let _ = tokio::join!(health_check, auth_events, metrics, pairing);
 }

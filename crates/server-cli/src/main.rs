@@ -36,6 +36,9 @@ async fn main() {
             AgentsCommand::Revoke { id } => commands::agents::revoke(&client, &base, id).await,
             AgentsCommand::Remove { id } => commands::agents::remove(&client, &base, id).await,
             AgentsCommand::Events { id } => commands::agents::events(&client, &base, id).await,
+            AgentsCommand::Metrics { id, limit } => {
+                commands::agents::metrics(&client, &base, id, limit).await
+            }
         },
         Command::Users { db, command } => match commands::users::open(db).await {
             Ok(pool) => match command {

@@ -1,6 +1,7 @@
 mod agents;
 mod auth;
 mod auth_events;
+mod metrics;
 mod routes;
 mod users;
 

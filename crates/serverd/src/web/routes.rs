@@ -10,7 +10,7 @@ use axum::routing::{delete, get, post};
 use axum::{Extension, Router};
 use sqlx::SqlitePool;
 
-use super::{agents, auth, auth_events, users};
+use super::{agents, auth, auth_events, metrics, users};
 
 pub fn router(pool: SqlitePool, session_ttl_hours: u32) -> Router {
     let public = Router::new()
@@ -24,11 +24,13 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32) -> Router {
         .route("/agents/{id}/approve", post(agents::approve))
         .route("/agents/{id}/revoke", post(agents::revoke))
         .route("/agents/{id}", delete(agents::remove))
-        .route("/agents/{id}/auth-events", get(auth_events::list));
+        .route("/agents/{id}/auth-events", get(auth_events::list))
+        .route("/agents/{id}/metrics", get(metrics::list));
 
     let agent = Router::new()
         .route("/agents/me", get(agents::me))
         .route("/agents/me/auth-events", post(auth_events::ingest))
+        .route("/agents/me/metrics", post(metrics::ingest))
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_agent,

@@ -1,4 +1,4 @@
-use protocol::{AgentSummary, ApproveResponse, AuthEventRecord};
+use protocol::{AgentSummary, ApproveResponse, AuthEventRecord, MetricsRecord};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -106,4 +106,76 @@ pub async fn events(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
         );
     }
     Ok(())
+}
+
+pub async fn metrics(
+    client: &reqwest::Client,
+    base: &str,
+    id: i64,
+    limit: u32,
+) -> Result<(), String> {
+    let records: Vec<MetricsRecord> = client
+        .get(format!("{base}/agents/{id}/metrics?limit={limit}"))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("server error: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {e}"))?;
+
+    if records.is_empty() {
+        println!("no metrics");
+        return Ok(());
+    }
+
+    println!(
+        "{:<20} {:>6} {:>19} {:>19} {:>16} {:<}",
+        "CREATED_AT", "CPU", "MEMORY", "SWAP", "LOAD 1/5/15", "DISKS (used/total)"
+    );
+    for record in records {
+        let m = record.metrics;
+        let cpu = m
+            .cpu
+            .map(|c| format!("{:.1}%", c.global_usage_percent))
+            .unwrap_or_else(|| "-".to_string());
+        let (memory, swap) = m
+            .memory
+            .map(|mem| {
+                (
+                    format!("{}/{}", gib(mem.used_bytes), gib(mem.total_bytes)),
+                    format!("{}/{}", gib(mem.swap_used_bytes), gib(mem.swap_total_bytes)),
+                )
+            })
+            .unwrap_or_else(|| ("-".to_string(), "-".to_string()));
+        let load = m
+            .linux
+            .map(|l| {
+                format!(
+                    "{:.2}/{:.2}/{:.2}",
+                    l.load_avg_one, l.load_avg_five, l.load_avg_fifteen
+                )
+            })
+            .unwrap_or_else(|| "-".to_string());
+        let disks = m
+            .disks
+            .iter()
+            .map(|d| {
+                let used = d.total_bytes.saturating_sub(d.available_bytes);
+                format!("{} {}/{}", d.mount_point, gib(used), gib(d.total_bytes))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        println!(
+            "{:<20} {:>6} {:>19} {:>19} {:>16} {}",
+            record.created_at, cpu, memory, swap, load, disks
+        );
+    }
+    Ok(())
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.1}G", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
 }

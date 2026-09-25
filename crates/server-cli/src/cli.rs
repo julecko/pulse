@@ -47,6 +47,13 @@ pub enum AgentsCommand {
     Remove { id: i64 },
     /// Show an agent's most recent PAM events (logins, sudo, failed auth)
     Events { id: i64 },
+    /// Show an agent's most recent metrics snapshots
+    Metrics {
+        id: i64,
+        /// How many snapshots to show (newest first)
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
