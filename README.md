@@ -11,11 +11,13 @@ Workspace layout:
 
 ```
 crates/
-  agent/         binary: runs on a monitored host, collects metrics
-  server/        binary: HTTPS API + SQLite storage, runs on the central server
+  agentd/        pulse-agentd: runs on a monitored host, collects metrics
+  serverd/       pulse-serverd: HTTPS API + SQLite storage, runs on the central server
+  server-cli/    pulse-server-cli: admin CLI (agents, users) for the server host
   protocol/      shared wire types (metrics payloads) used by agent and server
-  pulse-shared/  shared config loading + logging setup used by both binaries
+  pulse-shared/  shared config loading + logging setup used by all binaries
 config/          default TOML configs used in debug builds (server.toml, agent.toml)
+packaging/       Debian packaging: systemd units, maintainer scripts, release configs
 certs/           TLS cert/key for the server (gitignored, generate locally)
 data/            SQLite database file (gitignored, created automatically)
 ```
@@ -41,10 +43,10 @@ openssl req -x509 -newkey rsa:4096 -nodes -days 365 \
   -keyout certs/key.pem -out certs/cert.pem -subj "/CN=localhost"
 
 # 2. Run the server (creates data/server.db and applies migrations automatically)
-cargo run -p server
+cargo run -p serverd
 
 # 3. In another terminal, run the agent
-cargo run -p agent
+cargo run -p agentd
 ```
 
 The server listens on `https://0.0.0.0:8443` by default (see `config/server.toml`)
@@ -59,7 +61,7 @@ curl -k https://localhost:8443/hosts
 
 `certs/` is gitignored — everyone generates their own local dev cert. The
 server looks for `certs/cert.pem` and `certs/key.pem` (relative to cwd) in
-debug builds, or `/etc/pulse/certs/{cert,key}.pem` in release builds, unless
+debug builds, or `/etc/pulse-server/certs/{cert,key}.pem` in release builds, unless
 overridden by `[web.tls]` in the config file.
 
 Generate a self-signed cert valid for local dev:
@@ -75,39 +77,39 @@ Regenerate any time — just re-run the command above (it overwrites both files)
 ## Database / working with sqlx
 
 The server uses SQLite via `sqlx`, with migrations embedded into the binary
-at compile time (`sqlx::migrate!("./migrations")` in `crates/server/src/db/mod.rs`).
-**Just running `cargo run -p server` applies pending migrations automatically
+at compile time (`sqlx::migrate!("./migrations")` in `crates/serverd/src/db/mod.rs`).
+**Just running `cargo run -p serverd` applies pending migrations automatically
 — you don't need `DATABASE_URL` for normal development.**
 
 You only need `DATABASE_URL` set when invoking `sqlx-cli` directly (adding or
 reverting migrations by hand, or using `sqlx migrate` subcommands). The DB
-file lives at `data/server.db` (debug) or `/var/lib/pulse/server.db`
-(release) by default, and migrations live in `crates/server/migrations/`, not
-in the repo root — pass `--source` or `cd crates/server` first.
+file lives at `data/server.db` (debug) or `/var/lib/pulse-server/server.db`
+(release) by default, and migrations live in `crates/serverd/migrations/`, not
+in the repo root — pass `--source` or `cd crates/serverd` first.
 
 ```sh
 # from the repo root
 export DATABASE_URL="sqlite://$(pwd)/data/server.db"
 
 # add a new reversible migration
-sqlx migrate add -r -s --source crates/server/migrations <name>
+sqlx migrate add -r -s --source crates/serverd/migrations <name>
 
 # apply pending migrations manually
-sqlx migrate run --source crates/server/migrations
+sqlx migrate run --source crates/serverd/migrations
 
 # check migration status
-sqlx migrate info --source crates/server/migrations
+sqlx migrate info --source crates/serverd/migrations
 
 # revert the most recent migration (only works for reversible migrations
 # created with -r, i.e. with a paired .down.sql)
-sqlx migrate revert --source crates/server/migrations
+sqlx migrate revert --source crates/serverd/migrations
 ```
 
-Alternatively, run everything from inside `crates/server` and drop the
+Alternatively, run everything from inside `crates/serverd` and drop the
 `--source` flag:
 
 ```sh
-cd crates/server
+cd crates/serverd
 export DATABASE_URL="sqlite://$(pwd)/../../data/server.db"
 sqlx migrate revert
 ```
@@ -118,11 +120,12 @@ session.
 
 ## Configuration
 
-Both binaries load TOML config on startup via `pulse_shared::config::load`:
+All binaries load TOML config on startup via `pulse_shared::config::load`:
 
 - **debug build**: `config/<app>.toml` (the checked-in defaults, e.g.
   `config/server.toml`, `config/agent.toml`)
-- **release build**: `/etc/pulse/<app>.toml`
+- **release build**: `/etc/pulse-<app>/<app>.toml`, i.e. `/etc/pulse-server/server.toml`
+  and `/etc/pulse-agent/agent.toml` (not `/etc/pulse`, which is PulseAudio's)
 - either build: the `PULSE_CONFIG` env var, if set, overrides the path
 
 Any field not present in the file falls back to its default (see each
@@ -133,15 +136,74 @@ Any field not present in the file falls back to its default (see each
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
-to `/var/log/pulse/<app>.log` in release builds. `RUST_LOG` overrides
+to `/var/log/pulse-<app>/<app>.log` in release builds. `RUST_LOG` overrides
 `log.level` when set.
+
+## Installing (Debian/Ubuntu packages)
+
+Build both packages into `target/debian/` (needs
+[`cargo-deb`](https://github.com/kornelski/cargo-deb): `cargo install cargo-deb`):
+
+```sh
+./packaging/build-debs.sh
+```
+
+| Package | Contains | Install on |
+|---|---|---|
+| `pulse-server_<ver>_<arch>.deb` | `pulse-serverd` (daemon), `pulse-server-cli` | the central server |
+| `pulse-agent_<ver>_<arch>.deb` | `pulse-agentd` (daemon + PAM hook) | every monitored host |
+
+They require glibc 2.34+ (Ubuntu 22.04 / Debian 12 or newer). Both can be
+installed on the same host.
+
+```sh
+sudo apt install ./target/debian/pulse-server_*.deb
+sudo apt install ./target/debian/pulse-agent_*.deb
+```
+
+Installing creates a system user for each daemon. The server's unit is
+enabled and started right away. The agent's is installed **disabled**, since
+it first needs to know which server to report to (see below). Neither daemon
+runs as root:
+
+| | `pulse-serverd.service` | `pulse-agentd.service` |
+|---|---|---|
+| Runs as | `pulse-server` | `pulse-agent` |
+| Config | `/etc/pulse-server/server.toml` | `/etc/pulse-agent/agent.toml` |
+| State | `/var/lib/pulse-server/server.db` | `/var/lib/pulse-agent/identity.toml` |
+| Logs | `/var/log/pulse-server/` | `/var/log/pulse-agent/` |
+| Other | TLS cert in `/etc/pulse-server/certs/` | PAM socket `/run/pulse-agent/agent.sock` |
+
+On first install the server package generates a self-signed TLS cert in
+`/etc/pulse-server/certs/`. To use your own, replace `cert.pem` and `key.pem`
+there, keeping the key readable by the `pulse-server` group
+(`root:pulse-server`, mode `0640`), then run `systemctl restart pulse-serverd`.
+
+After installing:
+
+```sh
+# on each agent host: point it at the server, then start it
+sudoedit /etc/pulse-agent/agent.toml          # server_addr = "your-server:8443"
+sudo systemctl enable --now pulse-agentd
+
+# on the server host: approve agents, create users
+pulse-server-cli agents list
+pulse-server-cli agents approve <id>
+sudo pulse-server-cli users add alice         # needs write access to the DB
+```
+
+To set up login tracking, see [Tracking logins (PAM)](#tracking-logins-pam).
+
+`apt remove` stops the service and keeps config and data. `apt purge` also
+deletes the database or agent identity, the logs and the generated certs. The
+system users are left in place, as Debian policy recommends.
 
 ## Tracking logins (PAM)
 
 The agent can report SSH logins, `sudo`/`su` sessions and failed password
-attempts. PAM calls `agent pam-hook` through `pam_exec.so`. The hook writes
+attempts. PAM calls `pulse-agentd pam-hook` through `pam_exec.so`. The hook writes
 the event to the agent's local Unix socket (`pam_socket`: `data/agent.sock`
-in debug, `/run/pulse/agent.sock` in release) and exits. The agent then
+in debug, `/run/pulse-agent/agent.sock` in release) and exits. The agent then
 forwards events to the server with its bearer token
 (`POST /agents/me/auth-events`), so the server links each event to its host
 from the token. The hook never sees the token.
@@ -152,13 +214,14 @@ forge events. The agent keeps no history: each event is sent on its own as
 it arrives. If the agent isn't approved, or the server can't be reached,
 the event is dropped.
 
-Nothing is installed automatically. Add these lines by hand (paths assume
-the agent binary is at `/usr/local/bin/pulse-agent`):
+Neither the package nor anything else edits PAM config automatically. Add
+these lines by hand (paths assume the `pulse-agent` package, which installs
+`/usr/bin/pulse-agentd`):
 
 **Sessions**: add to `/etc/pam.d/sshd`, `/etc/pam.d/sudo`, `/etc/pam.d/su`:
 
 ```
-session optional pam_exec.so quiet /usr/local/bin/pulse-agent pam-hook
+session optional pam_exec.so quiet /usr/bin/pulse-agentd pam-hook
 ```
 
 **Failed authentication** (Debian/Ubuntu `/etc/pam.d/common-auth`): put the
@@ -167,7 +230,7 @@ so a successful login skips both:
 
 ```
 auth [success=2 default=ignore] pam_unix.so nullok
-auth optional pam_exec.so quiet /usr/local/bin/pulse-agent pam-hook
+auth optional pam_exec.so quiet /usr/bin/pulse-agentd pam-hook
 auth requisite pam_deny.so
 ```
 
@@ -182,28 +245,28 @@ Caveats:
   through PAM auth, so they aren't reported. Successful key logins are still
   reported as sessions.
 
-View an agent's events with `server-cli agents events <id>`.
+View an agent's events with `pulse-server-cli agents events <id>`.
 
 ## Users
 
-User accounts can only be created with `server-cli users`. There is no
+User accounts can only be created with `pulse-server-cli users`. There is no
 registration endpoint and no HTTP route that creates users. Unlike the other
-`server-cli` commands, `users` doesn't talk to the server's API. It opens the
+`pulse-server-cli` commands, `users` doesn't talk to the server's API. It opens the
 server's SQLite file directly, so it only works on the server host for someone
 with write access to that file (root or the service user):
 
 ```sh
 cargo run -p server-cli -- users add alice      # prompts for the password twice
-echo "$PASSWORD" | server-cli users add alice   # or read it from stdin (scripts)
+echo "$PASSWORD" | pulse-server-cli users add alice   # or from stdin (scripts)
 cargo run -p server-cli -- users list
 cargo run -p server-cli -- users remove alice   # also ends all of alice's sessions
 ```
 
 The database is found the same way the server finds it: `[db] path` from the
 server config (`PULSE_CONFIG`, else `config/server.toml` in debug or
-`/etc/pulse/server.toml` in release), else the default location. Override it
+`/etc/pulse-server/server.toml` in release), else the default location. Override it
 with `--db <path>`. The server must have run once so the database and its
-tables exist; `server-cli` never creates the database or runs migrations.
+tables exist; `pulse-server-cli` never creates the database or runs migrations.
 
 Passwords are never accepted as command-line arguments, so they don't end up
 in shell history or `ps`. They must be at least 8 characters and are stored as

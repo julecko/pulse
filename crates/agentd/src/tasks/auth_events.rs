@@ -1,4 +1,4 @@
-//! Receives PAM events from `agent pam-hook` over a local Unix socket and
+//! Receives PAM events from `pulse-agentd pam-hook` over a local Unix socket and
 //! forwards each one to the server, authenticated with the agent's token.
 //!
 //! The socket itself needs no auth: the kernel tells us the peer's uid, and

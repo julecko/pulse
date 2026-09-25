@@ -12,10 +12,17 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
+# Release optimizes for size ("z"), which also slows argon2 down noticeably.
+[profile.release.package.argon2]
+opt-level = 3
+
+[profile.release.package.blake2]
+opt-level = 3
+
 [workspace]
 members = [
-    "crates/agent",
-    "crates/server",
+    "crates/agentd",
+    "crates/serverd",
     "crates/server-cli",
     "crates/protocol",
     "crates/pulse-shared",

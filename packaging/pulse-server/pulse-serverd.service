@@ -1,0 +1,38 @@
+[Unit]
+Description=Pulse monitoring server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse-server
+Group=pulse-server
+ExecStart=/usr/bin/pulse-serverd
+Restart=on-failure
+RestartSec=5
+
+# /var/lib/pulse-server (SQLite database) and /var/log/pulse-server, owned by
+# pulse-server. Config and TLS certs are read from /etc/pulse-server.
+StateDirectory=pulse-server
+StateDirectoryMode=0750
+LogsDirectory=pulse-server
+LogsDirectoryMode=0750
+UMask=0027
+
+# Hardening: the server only needs its own state/log dirs and the network.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

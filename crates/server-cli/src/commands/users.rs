@@ -1,4 +1,4 @@
-//! `server-cli users ...`: the only way to create or remove user accounts.
+//! `pulse-server-cli users ...`: the only way to create or remove user accounts.
 //!
 //! Unlike the other commands this doesn't go through the server's HTTP API
 //! (there's deliberately no route that creates users): it opens the
@@ -30,7 +30,7 @@ struct ServerConfigDb {
 
 /// Opens the server database: `--db` if given, else `[db] path` from the
 /// server config (same lookup as the server: `PULSE_CONFIG`, then
-/// `config/server.toml` in debug / `/etc/pulse/server.toml` in release),
+/// `config/server.toml` in debug / `/etc/pulse-server/server.toml` in release),
 /// else the server's default location. Never creates the file or runs
 /// migrations — that's the server's job.
 pub async fn open(db: Option<PathBuf>) -> Result<SqlitePool, String> {

@@ -3,7 +3,7 @@
 //! Where lines go, in priority order:
 //! - `log.file` in config, if set
 //! - otherwise a debug build: stdout (your terminal)
-//! - otherwise a release build: `/var/log/pulse/<app>.log`
+//! - otherwise a release build: `/var/log/pulse-<app>/<app>.log`
 //!
 //! When writing to a file, `log.rotation` starts a fresh file every day (or
 //! hour/minute) and `log.keep_files` prunes the oldest — no `logrotate` needed.
@@ -26,15 +26,19 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_appender::rolling::Rotation;
 use tracing_subscriber::EnvFilter;
 
-/// Release default log dir; matches `LogsDirectory=pulse` in the systemd units.
-pub const DEFAULT_LOG_DIR: &str = "/var/log/pulse";
+/// Release default log dir for `app`, e.g. `/var/log/pulse-server`; matches
+/// `LogsDirectory=pulse-<app>` in the systemd units. One dir per daemon, since
+/// each runs as its own user.
+pub fn default_log_dir(app: &str) -> PathBuf {
+    PathBuf::from(format!("/var/log/pulse-{app}"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     /// `error|warn|info|debug|trace`, or any `RUST_LOG`-style filter string.
     pub level: String,
-    /// Explicit log file. Unset: stderr in debug, `DEFAULT_LOG_DIR` in release.
+    /// Explicit log file. Unset: stderr in debug, [`default_log_dir`] in release.
     pub file: Option<PathBuf>,
     /// ANSI colours; only applies when writing to a terminal.
     pub ansi: bool,
@@ -78,7 +82,7 @@ pub fn init(app: &str, cfg: &LogConfig) -> Result<Option<WorkerGuard>, LogError>
     let rotation = parse_rotation(&cfg.rotation)?;
 
     let target = cfg.file.clone().or_else(|| {
-        (!cfg!(debug_assertions)).then(|| PathBuf::from(DEFAULT_LOG_DIR).join(format!("{app}.log")))
+        (!cfg!(debug_assertions)).then(|| default_log_dir(app).join(format!("{app}.log")))
     });
 
     if let Some(path) = target {

@@ -1,0 +1,47 @@
+[package]
+name = "serverd"
+version = "0.1.0"
+edition = "2024"
+description = "Pulse monitoring server daemon"
+license-file = "../../LICENSE"
+
+[[bin]]
+name = "pulse-serverd"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.9"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+password-hash = { version = "0.5", features = ["getrandom"] }
+protocol = { path = "../protocol" }
+pulse-shared = { version = "0.1.0", path = "../pulse-shared", features = ["password"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+thiserror = "2"
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+uuid = { version = "1", features = ["v4"] }
+
+# Debian package: see packaging/build-debs.sh.
+[package.metadata.deb]
+name = "pulse-server"
+maintainer = "Julecko <julecko@dilino.sk>"
+copyright = "2026, Julecko <julecko@dilino.sk>"
+section = "admin"
+priority = "optional"
+# glibc 2.34+: Ubuntu 22.04 / Debian 12 or newer. openssl generates the
+# self-signed cert in postinst.
+depends = "libc6 (>= 2.34), libgcc-s1, openssl"
+extended-description = """\
+Central server for Pulse host monitoring: receives metrics and login events \
+from pulse-agent hosts over HTTPS and stores them in SQLite. Includes \
+pulse-server-cli for approving agents and managing user accounts."""
+maintainer-scripts = "../../packaging/pulse-server/"
+assets = [
+    ["target/release/pulse-serverd", "usr/bin/", "755"],
+    ["target/release/pulse-server-cli", "usr/bin/", "755"],
+    ["../../packaging/pulse-server/server.toml", "etc/pulse-server/server.toml", "644"],
+]
+systemd-units = { unit-name = "pulse-serverd", enable = true, start = true, restart-after-upgrade = true }

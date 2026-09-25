@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "server-cli", about = "Admin CLI for the Pulse server")]
+#[command(name = "pulse-server-cli", about = "Admin CLI for the Pulse server")]
 pub struct Cli {
     /// Pulse server address (host:port)
     #[arg(long, global = true, default_value = "127.0.0.1:8443")]

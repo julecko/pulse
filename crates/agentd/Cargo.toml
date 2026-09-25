@@ -1,0 +1,44 @@
+[package]
+name = "agentd"
+version = "0.1.0"
+edition = "2024"
+description = "Pulse monitoring agent daemon"
+license-file = "../../LICENSE"
+
+[[bin]]
+name = "pulse-agentd"
+path = "src/main.rs"
+
+[dependencies]
+protocol = { path = "../protocol" }
+pulse-shared = { path = "../pulse-shared" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sysinfo = "0.38.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+toml = "0.8"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Debian package: see packaging/build-debs.sh.
+[package.metadata.deb]
+name = "pulse-agent"
+maintainer = "Julecko <julecko@dilino.sk>"
+copyright = "2026, Julecko <julecko@dilino.sk>"
+section = "admin"
+priority = "optional"
+# glibc 2.34+: Ubuntu 22.04 / Debian 12 or newer.
+depends = "libc6 (>= 2.34), libgcc-s1"
+extended-description = """\
+Agent for Pulse host monitoring: collects metrics on this host and reports \
+them, along with PAM login events, to a pulse-server over HTTPS."""
+maintainer-scripts = "../../packaging/pulse-agent/"
+assets = [
+    ["target/release/pulse-agentd", "usr/bin/", "755"],
+    ["../../packaging/pulse-agent/agent.toml", "etc/pulse-agent/agent.toml", "644"],
+]
+# Installed disabled: the user sets server_addr first, then enables it (see
+# postinst). Upgrades restart it only if it's enabled.
+systemd-units = { unit-name = "pulse-agentd", enable = false, start = false, restart-after-upgrade = true }

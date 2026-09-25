@@ -2,9 +2,11 @@
 name = "server-cli"
 version = "0.1.0"
 edition = "2024"
+description = "Admin CLI for the Pulse monitoring server"
+license-file = "../../LICENSE"
 
 [[bin]]
-name = "server-cli"
+name = "pulse-server-cli"
 path = "src/main.rs"
 
 [dependencies]

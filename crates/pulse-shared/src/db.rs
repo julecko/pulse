@@ -1,18 +1,18 @@
 //! Where the server's SQLite file lives, shared by the server (which owns
-//! it) and `server-cli users` (which manages accounts in it directly).
+//! it) and `pulse-server-cli users` (which manages accounts in it directly).
 //!
 //! Absent an explicit `[db] path` in the server config:
 //! - debug build: `./data/server.db`, relative to cwd (the repo root
 //!   when run via `cargo run` from the workspace root)
 //! - release build: `DEFAULT_DATA_DIR/server.db`, matching
-//!   `StateDirectory=pulse` in the systemd unit
+//!   `StateDirectory=pulse-server` in the `pulse-serverd` systemd unit
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Release default data dir; matches `StateDirectory=pulse` in the systemd unit.
-pub const DEFAULT_DATA_DIR: &str = "/var/lib/pulse";
+/// Release default data dir; matches `StateDirectory=pulse-server` in the systemd unit.
+pub const DEFAULT_DATA_DIR: &str = "/var/lib/pulse-server";
 
 /// The server config's `[db]` section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

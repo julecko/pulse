@@ -1,0 +1,26 @@
+# Pulse agent config, read by pulse-agentd (and its PAM hook).
+# Apply changes with: systemctl restart pulse-agentd
+
+# Address (host:port) of the Pulse server. Set this to your server, then:
+#   sudo systemctl enable --now pulse-agentd
+server_addr = "127.0.0.1:8443"
+
+# How often to collect and send metrics, in seconds.
+interval_secs = 60
+
+# Unix socket the PAM hook (`pulse-agentd pam-hook`) reports events to.
+# Leave unset to use /run/pulse-agent/agent.sock.
+# pam_socket = "/run/pulse-agent/agent.sock"
+
+[log]
+# error | warn | info | debug | trace, or any RUST_LOG-style filter string.
+level = "info"
+
+# Leave unset to log to /var/log/pulse-agent/agent.log.
+# file = "/var/log/pulse-agent/agent.log"
+
+# How often to start a new log file: daily | hourly | minutely | never.
+rotation = "daily"
+
+# Keep at most this many rotated log files (0 = keep all).
+keep_files = 10

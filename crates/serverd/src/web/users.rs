@@ -1,6 +1,6 @@
 //! User login/logout and an example route protected by
 //! [`super::auth::require_user`]. There's deliberately no registration
-//! route: users are created with `server-cli users add`, which writes to
+//! route: users are created with `pulse-server-cli users add`, which writes to
 //! the database directly.
 
 use axum::extract::State;

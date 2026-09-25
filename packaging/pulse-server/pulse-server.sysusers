@@ -1,0 +1,2 @@
+# Service user for pulse-serverd; owns /var/lib/pulse-server and /var/log/pulse-server.
+u pulse-server - "Pulse monitoring server" /var/lib/pulse-server /usr/sbin/nologin

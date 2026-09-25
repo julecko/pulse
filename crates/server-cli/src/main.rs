@@ -10,7 +10,7 @@ use cli::{AgentsCommand, Cli, Command, UsersCommand};
 
 #[tokio::main]
 async fn main() {
-    // See crates/server/src/main.rs for why this is needed: the shared
+    // See crates/serverd/src/main.rs for why this is needed: the shared
     // workspace Cargo.lock pulls in two rustls crypto backends, so pin one
     // explicitly before any TLS work happens.
     rustls::crypto::ring::default_provider()
@@ -50,7 +50,7 @@ async fn main() {
     };
 
     if let Err(err) = result {
-        eprintln!("server-cli: {err}");
+        eprintln!("pulse-server-cli: {err}");
         std::process::exit(1);
     }
 }

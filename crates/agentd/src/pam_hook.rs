@@ -1,4 +1,4 @@
-//! `agent pam-hook`: invoked by `pam_exec.so` for each PAM event, reports it
+//! `pulse-agentd pam-hook`: invoked by `pam_exec.so` for each PAM event, reports it
 //! to the running agent over its local Unix socket and exits.
 //!
 //! Must never get in the way of a login: it's silent, gives up after a short

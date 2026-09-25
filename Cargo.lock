@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "agent"
+name = "agentd"
 version = "0.1.0"
 dependencies = [
  "protocol",
@@ -1815,7 +1815,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "server"
+name = "server-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "protocol",
+ "pulse-shared",
+ "reqwest",
+ "rpassword",
+ "rustls",
+ "serde",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "serverd"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -1831,21 +1846,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "server-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "protocol",
- "pulse-shared",
- "reqwest",
- "rpassword",
- "rustls",
- "serde",
- "sqlx",
- "tokio",
 ]
 
 [[package]]

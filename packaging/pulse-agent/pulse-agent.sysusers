@@ -1,0 +1,3 @@
+# Service user for pulse-agentd; owns /var/lib/pulse-agent, /run/pulse-agent
+# and /var/log/pulse-agent.
+u pulse-agent - "Pulse monitoring agent" /var/lib/pulse-agent /usr/sbin/nologin

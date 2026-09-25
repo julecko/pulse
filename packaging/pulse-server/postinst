@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # The key below is chowned to the pulse-server group, so the user must
+    # exist first. The generated section at the end of this script creates
+    # it too, but only after this block (and starts the service, which
+    # needs the cert).
+    systemd-sysusers pulse-server.conf
+
+    # Generate a self-signed TLS cert on first install, so the server can
+    # start right away. Replace both files to use a real cert; the key must
+    # stay readable by the pulse-server group.
+    CERT_DIR=/etc/pulse-server/certs
+    if [ ! -e "$CERT_DIR/cert.pem" ] && [ ! -e "$CERT_DIR/key.pem" ]; then
+        install -d -m 0750 -o root -g pulse-server "$CERT_DIR"
+        (
+            umask 077
+            openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+                -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
+                -subj "/CN=$(hostname)" 2>/dev/null
+        )
+        chown root:pulse-server "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
+        chmod 0640 "$CERT_DIR/key.pem"
+        chmod 0644 "$CERT_DIR/cert.pem"
+        echo "pulse-server: generated a self-signed TLS certificate in $CERT_DIR"
+    fi
+fi
+
+#DEBHELPER#

@@ -1,0 +1,38 @@
+# Pulse server config, read by pulse-serverd and pulse-server-cli.
+# Apply changes with: systemctl restart pulse-serverd
+
+[log]
+# error | warn | info | debug | trace, or any RUST_LOG-style filter string.
+level = "info"
+
+# Leave unset to log to /var/log/pulse-server/server.log.
+# file = "/var/log/pulse-server/server.log"
+
+# How often to start a new log file: daily | hourly | minutely | never.
+rotation = "daily"
+
+# Keep at most this many rotated log files (0 = keep all).
+keep_files = 10
+
+[web]
+# Address the HTTPS listener binds to.
+bind = "0.0.0.0:8443"
+
+# How long a user session from POST /auth/login stays valid, in hours.
+session_ttl_hours = 168
+
+[web.tls]
+# Leave unset to use /etc/pulse-server/certs/{cert,key}.pem; a self-signed pair is
+# generated there on install. The key must be readable by the pulse-server
+# group.
+# cert = "/etc/pulse-server/certs/cert.pem"
+# key = "/etc/pulse-server/certs/key.pem"
+
+[db]
+# Leave unset to use /var/lib/pulse-server/server.db.
+# path = "/var/lib/pulse-server/server.db"
+
+[retention]
+# Days of rows to keep; older rows are deleted hourly. 0 keeps rows forever.
+metrics_days = 14
+auth_events_days = 14

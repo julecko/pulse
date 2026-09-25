@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+# The agent is installed disabled: it needs to know which server to report
+# to before it's worth starting. Upgrades restart it only if it's enabled.
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    cat <<'MSG'
+
+pulse-agent is installed but not started. To finish setting it up:
+
+  1. Set server_addr to your Pulse server (host:port):
+       sudoedit /etc/pulse-agent/agent.toml
+  2. Start the agent and enable it at boot:
+       sudo systemctl enable --now pulse-agentd
+  3. Approve it on the server:
+       pulse-server-cli agents list
+       pulse-server-cli agents approve <id>
+
+MSG
+fi
+
+#DEBHELPER#

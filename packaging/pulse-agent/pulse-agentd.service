@@ -1,0 +1,40 @@
+[Unit]
+Description=Pulse monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse-agent
+Group=pulse-agent
+ExecStart=/usr/bin/pulse-agentd
+Restart=on-failure
+RestartSec=5
+
+# /var/lib/pulse-agent (identity + token), /run/pulse-agent (PAM event
+# socket) and /var/log/pulse-agent, owned by pulse-agent. The PAM hook runs
+# as root, so it can reach the socket despite the restrictive modes.
+StateDirectory=pulse-agent
+StateDirectoryMode=0750
+RuntimeDirectory=pulse-agent
+RuntimeDirectoryMode=0750
+LogsDirectory=pulse-agent
+LogsDirectoryMode=0750
+UMask=0027
+
+# Hardening: reading /proc and /sys for metrics needs no privileges.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

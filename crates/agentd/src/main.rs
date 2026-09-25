@@ -16,7 +16,7 @@ async fn main() {
         return;
     }
 
-    // See crates/server/src/main.rs for why this is needed: the shared
+    // See crates/serverd/src/main.rs for why this is needed: the shared
     // workspace Cargo.lock pulls in two rustls crypto backends, so pin one
     // explicitly before any TLS work happens.
     rustls::crypto::ring::default_provider()
@@ -24,14 +24,14 @@ async fn main() {
         .expect("failed to install default rustls crypto provider");
 
     let cfg: AgentConfig = pulse_shared::config::load("agent").unwrap_or_else(|err| {
-        eprintln!("agent: failed to load config: {err}");
+        eprintln!("pulse-agentd: failed to load config: {err}");
         std::process::exit(1);
     });
 
     let _log_guard = match pulse_shared::init("agent", &cfg.log) {
         Ok(guard) => guard,
         Err(err) => {
-            eprintln!("agent: failed to initialise logging: {err}");
+            eprintln!("pulse-agentd: failed to initialise logging: {err}");
             std::process::exit(1);
         }
     };

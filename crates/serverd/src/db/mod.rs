@@ -1,7 +1,7 @@
 //! SQLite storage. Where the database file lives is decided by
-//! [`pulse_shared::db::DbConfig`], shared with `server-cli users`.
+//! [`pulse_shared::db::DbConfig`], shared with `pulse-server-cli users`.
 //!
-//! Migrations live in `crates/server/migrations/` and are embedded into the
+//! Migrations live in `crates/serverd/migrations/` and are embedded into the
 //! binary at compile time, so they apply on startup regardless of cwd. Add a
 //! new one with `sqlx migrate add <name>` (run from `crates/server`).
 

@@ -11,8 +11,9 @@ use axum_server::tls_rustls::RustlsConfig;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-/// Release default cert dir; matches `ConfigurationDirectory=pulse` in the systemd unit.
-pub const DEFAULT_CERT_DIR: &str = "/etc/pulse/certs";
+/// Release default cert dir; the `pulse-server` package generates a
+/// self-signed cert here on install if none exists.
+pub const DEFAULT_CERT_DIR: &str = "/etc/pulse-server/certs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

@@ -18,7 +18,7 @@ impl AuthEventKind {
     }
 }
 
-/// A PAM event captured on the agent's host by `agent pam-hook`, forwarded
+/// A PAM event captured on the agent's host by `pulse-agentd pam-hook`, forwarded
 /// one at a time to `POST /agents/me/auth-events`. The owning agent is taken
 /// from the bearer token, never from the payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]

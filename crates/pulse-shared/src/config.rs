@@ -7,7 +7,8 @@
 //!
 //! Where the file is read from, in priority order:
 //! - `PULSE_CONFIG` env var, if set
-//! - release build: `/etc/pulse/<app>.toml`
+//! - release build: `/etc/pulse-<app>/<app>.toml` (not `/etc/pulse`, which
+//!   is PulseAudio's config dir)
 //! - debug build: `./config/<app>.toml` (the repo's checked-in `config/` dir,
 //!   when run from the workspace root)
 
@@ -15,8 +16,10 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 
-/// Release default config dir.
-pub const DEFAULT_CONFIG_DIR: &str = "/etc/pulse";
+/// Release default config dir for `app`, e.g. `/etc/pulse-server`.
+pub fn default_config_dir(app: &str) -> PathBuf {
+    PathBuf::from(format!("/etc/pulse-{app}"))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -34,7 +37,7 @@ pub fn default_path(app: &str) -> PathBuf {
     if cfg!(debug_assertions) {
         Path::new("config").join(format!("{app}.toml"))
     } else {
-        Path::new(DEFAULT_CONFIG_DIR).join(format!("{app}.toml"))
+        default_config_dir(app).join(format!("{app}.toml"))
     }
 }
 

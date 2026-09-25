@@ -1,5 +1,5 @@
 //! argon2id password hashing, shared by the server (verifying logins) and
-//! `server-cli users add` (creating accounts). Behind the `password`
+//! `pulse-server-cli users add` (creating accounts). Behind the `password`
 //! feature so the agent doesn't pull in argon2.
 
 use argon2::Argon2;

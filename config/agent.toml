@@ -1,7 +1,7 @@
 # Default agent config, used automatically in debug builds when running
 # from the workspace root (see pulse-shared::config::default_path).
 # In release builds this has no effect; the real file lives at
-# /etc/pulse/agent.toml instead.
+# /etc/pulse-agent/agent.toml instead.
 
 # Domain or IP (with port) of the server to send metrics to.
 server_addr = "127.0.0.1:8443"
@@ -10,17 +10,17 @@ server_addr = "127.0.0.1:8443"
 interval_secs = 60
 
 # Unix socket `agent pam-hook` reports PAM events to. Leave unset:
-# ./data/agent.sock in debug, /run/pulse/agent.sock in release.
-# pam_socket = "/run/pulse/agent.sock"
+# ./data/agent.sock in debug, /run/pulse-agent/agent.sock in release.
+# pam_socket = "/run/pulse-agent/agent.sock"
 
 [log]
 # error | warn | info | debug | trace, or any RUST_LOG-style filter string.
 # RUST_LOG, if set, overrides this.
-level = "warn,agent=debug"
+level = "warn,pulse_agentd=debug"
 
-# Explicit log file path. Leave unset: stdout in debug, /var/log/pulse/agent.log
+# Explicit log file path. Leave unset: stdout in debug, /var/log/pulse-agent/agent.log
 # in release.
-# file = "/var/log/pulse/agent.log"
+# file = "/var/log/pulse-agent/agent.log"
 
 # ANSI colours; only applies when writing to a terminal.
 ansi = true

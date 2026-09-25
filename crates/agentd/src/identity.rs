@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use sysinfo::System;
 use uuid::Uuid;
 
+/// Release default state dir; matches `StateDirectory=pulse-agent` in the systemd unit.
+pub const DEFAULT_STATE_DIR: &str = "/var/lib/pulse-agent";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub fingerprint: Uuid,
@@ -18,7 +21,7 @@ fn state_path() -> PathBuf {
     let dir = if cfg!(debug_assertions) {
         Path::new("data").to_path_buf()
     } else {
-        PathBuf::from("/var/lib/pulse")
+        PathBuf::from(DEFAULT_STATE_DIR)
     };
     dir.join("identity.toml")
 }

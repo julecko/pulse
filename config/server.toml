@@ -1,16 +1,16 @@
 # Default server config, used automatically in debug builds when running
 # from the workspace root (see pulse-shared::config::default_path).
 # In release builds this has no effect; the real file lives at
-# /etc/pulse/server.toml instead.
+# /etc/pulse-server/server.toml instead.
 
 [log]
 # error | warn | info | debug | trace, or any RUST_LOG-style filter string.
 # RUST_LOG, if set, overrides this.
-level = "warn,server=debug"
+level = "warn,pulse_serverd=debug"
 
-# Explicit log file path. Leave unset: stdout in debug, /var/log/pulse/server.log
+# Explicit log file path. Leave unset: stdout in debug, /var/log/pulse-server/server.log
 # in release.
-# file = "/var/log/pulse/server.log"
+# file = "/var/log/pulse-server/server.log"
 
 # ANSI colours; only applies when writing to a terminal.
 ansi = true
@@ -30,14 +30,14 @@ session_ttl_hours = 168
 
 [web.tls]
 # Explicit cert/key paths. Leave unset: ./certs/{cert,key}.pem in debug,
-# /etc/pulse/certs/{cert,key}.pem in release.
-# cert = "/etc/pulse/certs/cert.pem"
-# key = "/etc/pulse/certs/key.pem"
+# /etc/pulse-server/certs/{cert,key}.pem in release.
+# cert = "/etc/pulse-server/certs/cert.pem"
+# key = "/etc/pulse-server/certs/key.pem"
 
 [db]
 # Explicit SQLite database file. Leave unset: ./data/server.db in debug,
-# /var/lib/pulse/server.db in release.
-# path = "/var/lib/pulse/server.db"
+# /var/lib/pulse-server/server.db in release.
+# path = "/var/lib/pulse-server/server.db"
 
 [retention]
 # How many days of rows to keep; older rows are deleted on startup and then
