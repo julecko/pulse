@@ -107,6 +107,16 @@ impl Session {
         if resp.status() == StatusCode::UNAUTHORIZED {
             return Err("login failed: invalid username or password".to_string());
         }
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("?");
+            return Err(format!(
+                "login failed: too many login attempts from this address; try again in {retry}s"
+            ));
+        }
         let login: LoginResponse = resp
             .error_for_status()
             .map_err(|e| format!("login failed: {e}"))?

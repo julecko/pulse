@@ -1,13 +1,20 @@
 use std::time::Duration;
 
 use protocol::{PairRequest, PairResponse};
+use reqwest::StatusCode;
 use tokio::sync::watch;
 
 use crate::identity::{self, Identity};
 
-const PAIRING_POLL_INTERVAL: Duration = Duration::from_secs(15);
+const PAIRING_POLL_INTERVAL: Duration = Duration::from_secs(60);
+/// Wait after the server refuses a new pairing request (pairing closed, or
+/// too many pending), instead of asking again every interval.
+const PAIRING_REFUSED_BACKOFF: Duration = Duration::from_secs(5 * 60);
+/// Longest `Retry-After` honored when rate-limited.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(15 * 60);
 
-/// Polls `/agents/pair` on an interval for as long as the agent runs,
+/// Polls `/agents/pair` every minute for as long as the agent runs (backing
+/// off when the server refuses or rate-limits it),
 /// keeping the stored token in sync with the server's view of this
 /// fingerprint. A token existing locally is never treated as proof of
 /// approval by itself — every tick re-confirms the actual status, since a
@@ -22,9 +29,10 @@ pub async fn pairing_loop(
     mut identity: Identity,
     token_tx: watch::Sender<Option<String>>,
 ) {
-    let mut ticker = tokio::time::interval(PAIRING_POLL_INTERVAL);
+    let mut delay = Duration::ZERO;
     loop {
-        ticker.tick().await;
+        tokio::time::sleep(delay).await;
+        delay = PAIRING_POLL_INTERVAL;
 
         let host = identity::host_info();
         let req = PairRequest {
@@ -47,6 +55,32 @@ pub async fn pairing_loop(
         };
 
         let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok())
+                .map(Duration::from_secs)
+                .unwrap_or(PAIRING_REFUSED_BACKOFF);
+            delay = retry_after.clamp(PAIRING_POLL_INTERVAL, MAX_RETRY_AFTER);
+            tracing::warn!(
+                retry_in_secs = delay.as_secs(),
+                "pairing rate-limited by the server"
+            );
+            continue;
+        }
+        if matches!(
+            status,
+            StatusCode::FORBIDDEN | StatusCode::CONFLICT | StatusCode::SERVICE_UNAVAILABLE
+        ) {
+            // Pairing closed, hostname already taken, or too many pending
+            // requests; the body says which. None fixes itself quickly.
+            let body = response.text().await.unwrap_or_default();
+            delay = PAIRING_REFUSED_BACKOFF;
+            tracing::warn!(%status, body, retry_in_secs = delay.as_secs(), "server isn't accepting this agent's pairing request");
+            continue;
+        }
         if !status.is_success() {
             // Most likely cause: the server is running an older build that
             // disagrees with this agent's PairRequest/PairResponse shape.

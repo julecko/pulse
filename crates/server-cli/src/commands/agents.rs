@@ -1,4 +1,6 @@
-use protocol::{AgentSummary, ApproveResponse, AuthEventRecord, MetricsRecord};
+use protocol::{
+    AgentSummary, ApproveResponse, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest,
+};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -178,4 +180,54 @@ pub async fn metrics(
 
 fn gib(bytes: u64) -> String {
     format!("{:.1}G", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
+pub async fn pairing_status(client: &reqwest::Client, base: &str) -> Result<(), String> {
+    let status: PairingStatus = client
+        .get(format!("{base}/agents/pairing"))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("server error: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {e}"))?;
+    print_pairing(&status);
+    Ok(())
+}
+
+pub async fn set_pairing(
+    client: &reqwest::Client,
+    base: &str,
+    open: bool,
+    minutes: Option<u32>,
+) -> Result<(), String> {
+    let status: PairingStatus = client
+        .put(format!("{base}/agents/pairing"))
+        .json(&SetPairingRequest { open, minutes })
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("server error: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {e}"))?;
+    print_pairing(&status);
+    Ok(())
+}
+
+fn print_pairing(status: &PairingStatus) {
+    let state = match (status.open, &status.open_until) {
+        (true, Some(until)) => format!("open until {until} UTC"),
+        (true, None) => "open (until closed)".to_string(),
+        (false, _) => "closed".to_string(),
+    };
+    let by = status.updated_by.as_deref().unwrap_or("-");
+    println!("pairing: {state}");
+    println!("last changed {} UTC by {by}", status.updated_at);
+    if status.open {
+        println!("new agents can send pairing requests; approve them with `agents approve <id>`");
+    }
 }

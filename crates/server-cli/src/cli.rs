@@ -52,6 +52,11 @@ pub enum Command {
 pub enum AgentsCommand {
     /// List all agents (pending, approved, revoked)
     List,
+    /// Show, open or close pairing for new agents
+    Pairing {
+        #[command(subcommand)]
+        command: PairingCommand,
+    },
     /// Approve a pending agent, printing the issued token
     Approve { id: i64 },
     /// Revoke an agent's access
@@ -67,6 +72,21 @@ pub enum AgentsCommand {
         #[arg(long, default_value_t = 10)]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+pub enum PairingCommand {
+    /// Show whether new agents can pair
+    Status,
+    /// Let new agents send pairing requests (you still approve each one)
+    Open {
+        /// Close again automatically after this many minutes (1-10080).
+        /// Default: stay open until `pairing close`
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=10080))]
+        minutes: Option<u32>,
+    },
+    /// Stop accepting new pairing requests (known agents keep working)
+    Close,
 }
 
 #[derive(Subcommand)]

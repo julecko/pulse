@@ -21,6 +21,16 @@ bind = "0.0.0.0:8443"
 # How long a user session from POST /auth/login stays valid, in hours.
 session_ttl_hours = 168
 
+[web.rate_limit]
+# Per client IP (IPv6: per /64), for the routes anyone can reach. A client
+# over the limit gets 429 with Retry-After. 0 disables a limit, e.g. behind
+# a reverse proxy (all requests come from its IP; rate-limit there instead).
+# Failed logins (successful ones don't count).
+login_failures_per_minute = 5
+# Agent pairing polls. Every agent polls once a minute, even after approval,
+# so this also caps how many agents can share one public IP (e.g. NAT).
+pair_per_minute = 30
+
 [web.tls]
 # Leave unset to use /etc/pulse-server/certs/{cert,key}.pem; a self-signed pair is
 # generated there on install. The key must be readable by the pulse-server

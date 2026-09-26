@@ -217,13 +217,59 @@ sudo systemctl enable --now pulse-agentd
 # on the server host: create your admin user first (needs write access to the DB)
 sudo pulse-server-cli users add alice
 
-# then approve agents; `agents` commands log in and ask for the password
+# then let agents pair (closed by default) and approve them; `agents`
+# commands log in and ask for the password
+pulse-server-cli -u alice agents pairing open --minutes 15
 pulse-server-cli -u alice agents list
 pulse-server-cli -u alice agents approve <id>
+pulse-server-cli -u alice agents pairing close
 pulse-server-cli -u alice agents metrics <id>  # latest snapshots (--limit N)
 ```
 
 To set up login tracking, see [Tracking logins (PAM)](#tracking-logins-pam).
+
+### Pairing window
+
+New agents can only send pairing requests while pairing is **open**. It's
+closed by default (also after upgrading), so strangers who can reach the
+server can't fill the agent list with fake requests. Open it while you add
+agents, then close it again:
+
+```sh
+pulse-server-cli -u alice agents pairing open --minutes 15   # closes by itself
+pulse-server-cli -u alice agents pairing open                # until you close it
+pulse-server-cli -u alice agents pairing close
+pulse-server-cli -u alice agents pairing status
+```
+
+While it's closed, `POST /agents/pair` refuses unknown agents with `403`
+(they log why and retry every 5 minutes). Agents the server already knows
+(pending, approved or revoked) can always poll their status, so approved
+agents keep working and still notice being revoked. While it's open, at most
+100 requests can be pending at once; more get `503` until you approve or
+remove some. Hostnames must be unique: a second agent reporting a taken
+hostname gets `409`.
+
+Agents poll `/agents/pair` once a minute.
+
+### Rate limiting
+
+The routes anyone can reach are rate-limited per client IP (IPv6: per /64),
+configurable under `[web.rate_limit]` in the server config:
+
+| Route | Default | Counts |
+|---|---|---|
+| `POST /auth/login` | 5 per minute | failed logins only |
+| `POST /agents/pair` | 30 per minute | every request |
+
+Over the limit, the server answers `429` with `Retry-After` (the agent waits
+that long; `pulse-server-cli` says how long). Five wrong passwords lock
+that address out briefly, even for the right password, so guesses can't
+continue. The pairing limit also caps how many agents can share one public
+IP (e.g. behind NAT); raise it if you have more. Behind a reverse proxy,
+every client shares the proxy's IP: set the limits to `0` and rate-limit at
+the proxy. Password checks are also limited to a few at a time (each takes
+~19 MiB), so a flood of logins can't exhaust the server's memory.
 
 ### Verifying the server's cert
 

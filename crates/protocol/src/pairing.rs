@@ -35,3 +35,24 @@ pub struct AgentSummary {
 pub struct ApproveResponse {
     pub token: String,
 }
+
+/// Returned by `GET/PUT /agents/pairing`: whether `POST /agents/pair`
+/// accepts new agents right now. Already-known agents can always poll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingStatus {
+    pub open: bool,
+    /// UTC, `YYYY-MM-DD HH:MM:SS`, when an open window closes by itself;
+    /// `None` if it stays open until closed (or it's closed).
+    pub open_until: Option<String>,
+    pub updated_by: Option<String>,
+    pub updated_at: String,
+}
+
+/// Sent to `PUT /agents/pairing`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetPairingRequest {
+    pub open: bool,
+    /// With `open`: close again automatically after this many minutes.
+    /// Unset: stay open until closed.
+    pub minutes: Option<u32>,
+}

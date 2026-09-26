@@ -2,6 +2,7 @@ mod agents;
 mod auth;
 mod auth_events;
 mod metrics;
+mod rate_limit;
 mod routes;
 mod users;
 
@@ -20,6 +21,7 @@ pub struct WebConfig {
     pub tls: TlsConfig,
     /// How long a user session from `POST /auth/login` stays valid.
     pub session_ttl_hours: u32,
+    pub rate_limit: rate_limit::RateLimitConfig,
 }
 
 impl Default for WebConfig {
@@ -28,6 +30,7 @@ impl Default for WebConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], 8443)),
             tls: TlsConfig::default(),
             session_ttl_hours: 24 * 7,
+            rate_limit: rate_limit::RateLimitConfig::default(),
         }
     }
 }
@@ -52,7 +55,7 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
 
     axum_server::bind_rustls(cfg.bind, tls)
         .serve(
-            routes::router(pool, cfg.session_ttl_hours)
+            routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit)
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await

@@ -8,7 +8,7 @@ mod prompt;
 mod session;
 
 use clap::Parser;
-use cli::{AgentsCommand, Cli, Command, UsersCommand};
+use cli::{AgentsCommand, Cli, Command, PairingCommand, UsersCommand};
 use reqwest::header::HeaderMap;
 use session::Session;
 
@@ -74,6 +74,13 @@ async fn run_agents(
 ) -> Result<(), String> {
     match command {
         AgentsCommand::List => commands::agents::list(client, base).await,
+        AgentsCommand::Pairing { command } => match command {
+            PairingCommand::Status => commands::agents::pairing_status(client, base).await,
+            PairingCommand::Open { minutes } => {
+                commands::agents::set_pairing(client, base, true, minutes).await
+            }
+            PairingCommand::Close => commands::agents::set_pairing(client, base, false, None).await,
+        },
         AgentsCommand::Approve { id } => commands::agents::approve(client, base, id).await,
         AgentsCommand::Revoke { id } => commands::agents::revoke(client, base, id).await,
         AgentsCommand::Remove { id } => commands::agents::remove(client, base, id).await,

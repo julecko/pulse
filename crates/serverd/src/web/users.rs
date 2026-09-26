@@ -3,6 +3,8 @@
 //! route: users are created with `pulse-server-cli users add`, which writes to
 //! the database directly.
 
+use std::sync::LazyLock;
+
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -17,6 +19,14 @@ use crate::credentials;
 pub struct SessionTtl(pub u32);
 
 const INVALID_CREDENTIALS: &str = "invalid username or password";
+
+/// Password checks allowed at once. Each argon2 verify holds ~19 MiB for
+/// its duration, so without a cap a flood of logins (even rate-limited per
+/// IP, from many IPs) could exhaust memory; excess logins wait their turn.
+static PASSWORD_CHECKS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
+    let cpus = std::thread::available_parallelism().map_or(2, |n| n.get());
+    tokio::sync::Semaphore::new(cpus.clamp(2, 8))
+});
 
 pub async fn login(
     State(pool): State<SqlitePool>,
@@ -37,10 +47,15 @@ pub async fn login(
         None => (None, credentials::DUMMY_PASSWORD_HASH.clone()),
     };
     let password = req.password;
+    let permit = PASSWORD_CHECKS
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // argon2 is deliberately slow; keep it off the async worker threads.
     let valid = tokio::task::spawn_blocking(move || credentials::verify_password(&password, &hash))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    drop(permit);
 
     let Some(user_id) = user_id.filter(|_| valid) else {
         tracing::warn!(username = %req.username, "failed login");
