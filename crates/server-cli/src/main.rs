@@ -26,15 +26,15 @@ async fn main() {
     let base = format!("https://{}", cli.server);
 
     let result = match cli.command {
-        Command::Health => {
-            commands::health::check(&session::http_client(HeaderMap::new()), &base).await
-        }
-        Command::Agents { command } => match Session::login(&base, cli.user).await {
-            Ok(session) => {
-                let result = run_agents(session.client(), &base, command).await;
-                session.logout().await;
-                result
+        Command::Health => match session::ca_cert(cli.ca_cert) {
+            Ok(ca_cert) => {
+                let client = session::http_client(ca_cert.as_ref(), HeaderMap::new());
+                commands::health::check(&client, &base).await
             }
+            Err(err) => Err(err),
+        },
+        Command::Agents { command } => match session::ca_cert(cli.ca_cert) {
+            Ok(ca_cert) => run_agents_session(&base, ca_cert.as_ref(), cli.user, command).await,
             Err(err) => Err(err),
         },
         Command::Users { db, command } => match commands::users::open(db).await {
@@ -53,6 +53,18 @@ async fn main() {
         eprintln!("pulse-server-cli: {err}");
         std::process::exit(1);
     }
+}
+
+async fn run_agents_session(
+    base: &str,
+    ca_cert: Option<&reqwest::Certificate>,
+    user: Option<String>,
+    command: AgentsCommand,
+) -> Result<(), String> {
+    let session = Session::login(base, ca_cert, user).await?;
+    let result = run_agents(session.client(), base, command).await;
+    session.logout().await;
+    result
 }
 
 async fn run_agents(

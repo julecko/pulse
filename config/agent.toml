@@ -6,6 +6,11 @@
 # Domain or IP (with port) of the server to send metrics to.
 server_addr = "127.0.0.1:8443"
 
+# Extra cert (PEM) to trust for the server, on top of the public CA roots;
+# the server's cert is always verified. Points at the local dev cert from
+# the README (relative to cwd, i.e. the workspace root).
+ca_cert = "certs/cert.pem"
+
 # How often to collect and send metrics, in seconds.
 interval_secs = 60
 

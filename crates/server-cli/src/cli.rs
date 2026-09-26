@@ -9,6 +9,13 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "127.0.0.1:8443")]
     pub server: String,
 
+    /// Extra certificate (PEM) to trust for the server, on top of the
+    /// built-in public CA roots. Default: the server's own cert
+    /// (`[web.tls] cert` from the server config, else
+    /// /etc/pulse-server/certs/cert.pem), when it's readable.
+    #[arg(long, global = true)]
+    pub ca_cert: Option<PathBuf>,
+
     /// User to log in as for `agents` commands (prompted for if omitted).
     /// The password is always prompted for without echo, or read from
     /// stdin when piped.

@@ -13,6 +13,11 @@ pub struct AgentConfig {
     pub server_addr: String,
     /// How often to collect and send metrics.
     pub interval_secs: u64,
+    /// Extra certificate (PEM) to trust for the server, on top of the
+    /// built-in public CA roots. Set this to the server's own `cert.pem`
+    /// when it uses a self-signed cert. The server's cert is always
+    /// verified; there is no way to turn that off.
+    pub ca_cert: Option<PathBuf>,
     /// Unix socket `pulse-agentd pam-hook` reports PAM events to. Unset:
     /// `./data/agent.sock` in debug, `DEFAULT_RUNTIME_DIR/agent.sock` in release.
     pub pam_socket: Option<PathBuf>,
@@ -37,6 +42,7 @@ impl Default for AgentConfig {
         Self {
             server_addr: "127.0.0.1:8080".to_string(),
             interval_secs: 60,
+            ca_cert: None,
             pam_socket: None,
             log: LogConfig::default(),
         }

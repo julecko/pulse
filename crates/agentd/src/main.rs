@@ -57,12 +57,10 @@ async fn main() {
         "agent identity loaded"
     );
 
-    // Server uses a self-signed cert in dev and there's no CA trust
-    // distribution yet, so skip verification for now.
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("failed to build HTTP client");
+    let client = http_client(&cfg).unwrap_or_else(|err| {
+        tracing::error!("pulse-agentd: {err}");
+        std::process::exit(1);
+    });
 
     let pair_url = format!("https://{}/agents/pair", cfg.server_addr);
     let auth_events_url = format!("https://{}/agents/me/auth-events", cfg.server_addr);
@@ -89,4 +87,22 @@ async fn main() {
     let pairing = tokio::spawn(pairing_loop(client, pair_url, identity, token_tx));
 
     let _ = tokio::join!(auth_events, metrics, pairing);
+}
+
+/// HTTPS client that always verifies the server's cert: against the
+/// built-in public CA roots, plus `ca_cert` if set (for a self-signed
+/// server cert). Without verification, anyone on the network path could
+/// impersonate the server and collect the fingerprint and token.
+fn http_client(cfg: &AgentConfig) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(path) = &cfg.ca_cert {
+        let pem =
+            std::fs::read(path).map_err(|e| format!("reading ca_cert {}: {e}", path.display()))?;
+        let cert = reqwest::Certificate::from_pem(&pem)
+            .map_err(|e| format!("parsing ca_cert {}: {e}", path.display()))?;
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("building HTTP client: {e}"))
 }

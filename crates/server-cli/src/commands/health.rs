@@ -3,7 +3,7 @@ pub async fn check(client: &reqwest::Client, base: &str) -> Result<(), String> {
         .get(format!("{base}/healthz"))
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| crate::session::request_error(&e))?;
 
     let status = resp.status();
     if status.is_success() {

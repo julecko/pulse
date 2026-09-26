@@ -39,7 +39,9 @@ pub async fn pairing_loop(
         let response = match client.post(&url).json(&req).send().await {
             Ok(resp) => resp,
             Err(err) => {
-                tracing::warn!(%err, "pairing request failed");
+                // The cause (e.g. a rejected server cert) is only in the
+                // source chain, not in reqwest's own message.
+                tracing::warn!(err = %error_chain(&err), "pairing request failed");
                 continue;
             }
         };
@@ -86,4 +88,15 @@ pub async fn pairing_loop(
             true
         });
     }
+}
+
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(err) = source {
+        msg.push_str(": ");
+        msg.push_str(&err.to_string());
+        source = err.source();
+    }
+    msg
 }

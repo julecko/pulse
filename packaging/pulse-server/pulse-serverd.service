@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pulse-server
 Group=pulse-server
-ExecStart=/usr/bin/pulse-serverd
+ExecStart=/usr/lib/pulse-server/pulse-serverd
 Restart=on-failure
 RestartSec=5
 

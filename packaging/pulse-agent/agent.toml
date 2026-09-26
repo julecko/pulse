@@ -5,6 +5,13 @@
 #   sudo systemctl enable --now pulse-agentd
 server_addr = "127.0.0.1:8443"
 
+# The server's TLS cert is always verified: against the public CA roots,
+# plus this file if set. If the server uses its self-signed cert (the
+# default), copy the server's /etc/pulse-server/certs/cert.pem here and
+# uncomment this line. The host in server_addr must be one of the names
+# the cert is valid for (see pulse-server-gen-cert on the server).
+# ca_cert = "/etc/pulse-agent/server.pem"
+
 # How often to collect and send metrics, in seconds.
 interval_secs = 60
 

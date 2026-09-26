@@ -8,15 +8,38 @@ if [ "$1" = "configure" ] && [ -z "$2" ]; then
 
 pulse-agent is installed but not started. To finish setting it up:
 
-  1. Set server_addr to your Pulse server (host:port):
+  1. If the server uses its self-signed cert (the default), copy the
+     server's /etc/pulse-server/certs/cert.pem to this host:
+       sudo install -m 0644 cert.pem /etc/pulse-agent/server.pem
+  2. Set server_addr to your Pulse server (host:port), and uncomment
+     ca_cert if you did step 1:
        sudoedit /etc/pulse-agent/agent.toml
-  2. Start the agent and enable it at boot:
+  3. Start the agent and enable it at boot:
        sudo systemctl enable --now pulse-agentd
-  3. Approve it on the server (logs in as a Pulse user):
+  4. Approve it on the server (logs in as a Pulse user):
        pulse-server-cli -u <user> agents list
        pulse-server-cli -u <user> agents approve <id>
 
 MSG
+fi
+
+# pulse-agentd moved from /usr/bin to /usr/lib/pulse-agent (it's a daemon,
+# not a user command). PAM lines added for an older version still point at
+# the old path; they fail silently (they're `optional`), so login events
+# stop being reported. The package never edits PAM config itself, so just
+# say which files need updating.
+NEW=/usr/lib/pulse-agent/pulse-agentd
+if [ "$1" = "configure" ] && [ -n "$2" ]; then
+    STALE=$(grep -lE '/usr/s?bin/pulse-agentd' /etc/pam.d/* 2>/dev/null || true)
+    if [ -n "$STALE" ]; then
+        echo
+        echo "pulse-agent: WARNING: pulse-agentd is now $NEW, but these PAM files"
+        echo "still call it by its old path, so login events aren't reported:"
+        echo "$STALE" | sed 's/^/  /'
+        echo "Update the path in them, e.g.:"
+        echo "  sudo sed -i -E 's#/usr/s?bin/pulse-agentd#$NEW#' $(echo $STALE)"
+        echo
+    fi
 fi
 
 #DEBHELPER#

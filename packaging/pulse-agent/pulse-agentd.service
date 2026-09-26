@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pulse-agent
 Group=pulse-agent
-ExecStart=/usr/bin/pulse-agentd
+ExecStart=/usr/lib/pulse-agent/pulse-agentd
 Restart=on-failure
 RestartSec=5
 

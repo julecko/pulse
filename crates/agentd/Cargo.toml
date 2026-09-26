@@ -1,6 +1,6 @@
 [package]
 name = "agentd"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Pulse monitoring agent daemon"
 license-file = "../../LICENSE"
@@ -36,7 +36,7 @@ Agent for Pulse host monitoring: collects metrics on this host and reports \
 them, along with PAM login events, to a pulse-server over HTTPS."""
 maintainer-scripts = "../../packaging/pulse-agent/"
 assets = [
-    ["target/release/pulse-agentd", "usr/bin/", "755"],
+    ["target/release/pulse-agentd", "usr/lib/pulse-agent/", "755"],
     ["../../packaging/pulse-agent/agent.toml", "etc/pulse-agent/agent.toml", "644"],
 ]
 # Installed disabled: the user sets server_addr first, then enables it (see

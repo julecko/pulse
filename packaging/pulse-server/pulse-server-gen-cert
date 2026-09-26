@@ -1,0 +1,87 @@
+#!/bin/sh
+# Generates the server's self-signed TLS cert/key pair.
+#
+#   pulse-server-gen-cert [--force] [NAME_OR_IP ...]
+#
+# The cert is valid for this host's hostname, FQDN, current IP addresses,
+# localhost/127.0.0.1/::1, plus any extra DNS names or IPs given as
+# arguments (e.g. a public DNS name agents use to reach the server). Agents
+# verify the server's cert, so the address in their `server_addr` must be
+# one of these names.
+#
+# Refuses to overwrite an existing pair unless --force is given. After
+# regenerating, copy the new cert.pem to every agent again (their ca_cert)
+# and restart pulse-serverd.
+#
+# CERT_DIR overrides the output dir (default /etc/pulse-server/certs).
+set -eu
+
+CERT_DIR=${CERT_DIR:-/etc/pulse-server/certs}
+FORCE=0
+if [ "${1:-}" = "--force" ]; then
+    FORCE=1
+    shift
+fi
+
+if [ "$FORCE" -eq 0 ] && { [ -e "$CERT_DIR/cert.pem" ] || [ -e "$CERT_DIR/key.pem" ]; }; then
+    echo "pulse-server-gen-cert: $CERT_DIR already has a cert/key; pass --force to replace them" >&2
+    exit 1
+fi
+
+# One "DNS:x" / "IP:x" entry per line, deduplicated below.
+entries() {
+    echo "DNS:localhost"
+    echo "IP:127.0.0.1"
+    echo "IP:::1"
+    h=$(hostname 2>/dev/null || true)
+    [ -n "$h" ] && echo "DNS:$h"
+    f=$(hostname -f 2>/dev/null || true)
+    [ -n "$f" ] && echo "DNS:$f"
+    for ip in $(hostname -I 2>/dev/null || true); do
+        # Skip IPv6 link-local addresses; they need a zone and can't be
+        # used in server_addr anyway.
+        case "$ip" in fe80:*) continue ;; esac
+        echo "IP:$ip"
+    done
+    for extra in "$@"; do
+        case "$extra" in
+            *[!0-9.]*)
+                case "$extra" in
+                    *:*) echo "IP:$extra" ;; # IPv6
+                    *) echo "DNS:$extra" ;;
+                esac
+                ;;
+            *) echo "IP:$extra" ;; # IPv4
+        esac
+    done
+}
+SAN=$(entries "$@" | awk '!seen[$0]++' | paste -sd, -)
+CN=$(hostname 2>/dev/null || echo localhost)
+
+# The directory holds no secrets besides key.pem, which has its own 0640
+# mode; keeping the dir world-readable lets admins point `--ca-cert` (or
+# pulse-server-cli's default) at cert.pem without root.
+install -d -m 0755 "$CERT_DIR"
+(
+    umask 077
+    # CA:FALSE: it's used directly as the server cert, and rustls rejects
+    # CA certs as server certs. The SAN is what clients check the address
+    # against (the CN is ignored).
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+        -days 3650 -keyout "$CERT_DIR/key.pem.new" -out "$CERT_DIR/cert.pem.new" \
+        -subj "/CN=$CN" \
+        -addext "basicConstraints=critical,CA:FALSE" \
+        -addext "keyUsage=critical,digitalSignature" \
+        -addext "extendedKeyUsage=serverAuth" \
+        -addext "subjectAltName=$SAN" 2>/dev/null
+)
+chmod 0644 "$CERT_DIR/cert.pem.new"
+chmod 0640 "$CERT_DIR/key.pem.new"
+if getent group pulse-server >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+    chown root:pulse-server "$CERT_DIR/key.pem.new" "$CERT_DIR/cert.pem.new"
+fi
+mv "$CERT_DIR/key.pem.new" "$CERT_DIR/key.pem"
+mv "$CERT_DIR/cert.pem.new" "$CERT_DIR/cert.pem"
+
+echo "pulse-server: generated a self-signed TLS certificate in $CERT_DIR"
+echo "  valid for: $SAN"

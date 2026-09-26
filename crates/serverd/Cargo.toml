@@ -1,6 +1,6 @@
 [package]
 name = "serverd"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Pulse monitoring server daemon"
 license-file = "../../LICENSE"
@@ -41,8 +41,9 @@ from pulse-agent hosts over HTTPS and stores them in SQLite. Includes \
 pulse-server-cli for approving agents and managing user accounts."""
 maintainer-scripts = "../../packaging/pulse-server/"
 assets = [
-    ["target/release/pulse-serverd", "usr/bin/", "755"],
+    ["target/release/pulse-serverd", "usr/lib/pulse-server/", "755"],
     ["target/release/pulse-server-cli", "usr/bin/", "755"],
+    ["../../packaging/pulse-server/pulse-server-gen-cert", "usr/sbin/", "755"],
     ["../../packaging/pulse-server/server.toml", "etc/pulse-server/server.toml", "644"],
 ]
 systemd-units = { unit-name = "pulse-serverd", enable = true, start = true, restart-after-upgrade = true }

@@ -6,15 +6,12 @@ mod routes;
 mod users;
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use axum_server::tls_rustls::RustlsConfig;
+use pulse_shared::tls::TlsConfig;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-
-/// Release default cert dir; the `pulse-server` package generates a
-/// self-signed cert here on install if none exists.
-pub const DEFAULT_CERT_DIR: &str = "/etc/pulse-server/certs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -35,15 +32,6 @@ impl Default for WebConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct TlsConfig {
-    /// Explicit cert file. Unset: `<cert dir>/cert.pem`.
-    pub cert: Option<PathBuf>,
-    /// Explicit key file. Unset: `<cert dir>/key.pem`.
-    pub key: Option<PathBuf>,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum WebError {
     #[error("loading TLS cert {0} / key {1}: {2}")]
@@ -52,18 +40,9 @@ pub enum WebError {
     Serve(SocketAddr, std::io::Error),
 }
 
-fn cert_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        Path::new("certs").to_path_buf()
-    } else {
-        PathBuf::from(DEFAULT_CERT_DIR)
-    }
-}
-
 pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
-    let dir = cert_dir();
-    let cert = cfg.tls.cert.clone().unwrap_or_else(|| dir.join("cert.pem"));
-    let key = cfg.tls.key.clone().unwrap_or_else(|| dir.join("key.pem"));
+    let cert = cfg.tls.resolved_cert();
+    let key = cfg.tls.resolved_key();
 
     let tls = RustlsConfig::from_pem_file(&cert, &key)
         .await

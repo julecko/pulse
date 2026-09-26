@@ -39,8 +39,10 @@ cd pulse
 
 # 1. TLS cert (see below)
 mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -nodes -days 365 \
-  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=localhost"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=localhost" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
 
 # 2. Run the server (creates data/server.db and applies migrations automatically)
 cargo run -p serverd
@@ -50,11 +52,10 @@ cargo run -p agentd
 ```
 
 The server listens on `https://0.0.0.0:8443` by default (see `config/server.toml`)
-and serves a self-signed cert, so `curl` needs `-k`:
+and serves a self-signed cert, so tell `curl` to trust it:
 
 ```sh
-curl -k https://localhost:8443/healthz
-curl -k https://localhost:8443/hosts
+curl --cacert certs/cert.pem https://localhost:8443/healthz
 ```
 
 ## TLS certs
@@ -68,11 +69,21 @@ Generate a self-signed cert valid for local dev:
 
 ```sh
 mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -nodes -days 365 \
-  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=localhost"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=localhost" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
 ```
 
 Regenerate any time — just re-run the command above (it overwrites both files).
+
+The agent and `pulse-server-cli` always verify the server's cert, so a
+cert made without the `-addext` lines above (e.g. by an older version of
+this README) is rejected: rustls needs a `subjectAltName` matching the
+address you connect to, and refuses certs marked `CA:TRUE` as server certs.
+In debug builds the agent trusts `certs/cert.pem` via `ca_cert` in
+`config/agent.toml`, and `pulse-server-cli` trusts the server's cert
+automatically (see [Verifying the server's cert](#verifying-the-servers-cert)).
 
 ## Database / working with sqlx
 
@@ -161,6 +172,14 @@ sudo apt install ./target/debian/pulse-server_*.deb
 sudo apt install ./target/debian/pulse-agent_*.deb
 ```
 
+The daemons aren't commands to run by hand, so they're installed outside
+every user's `PATH`, in a private directory per package (like Postfix's
+`/usr/lib/postfix/sbin/`): `/usr/lib/pulse-server/pulse-serverd` and
+`/usr/lib/pulse-agent/pulse-agentd`. Manage them with `systemctl`
+(`systemctl status|restart pulse-serverd`, logs in `/var/log/pulse-*/`).
+The only command meant for users is `pulse-server-cli`, in `/usr/bin`; the
+admin tool `pulse-server-gen-cert` is in `/usr/sbin`.
+
 Installing creates a system user for each daemon. The server's unit is
 enabled and started right away. The agent's is installed **disabled**, since
 it first needs to know which server to report to (see below). Neither daemon
@@ -175,15 +194,24 @@ runs as root:
 | Other | TLS cert in `/etc/pulse-server/certs/` | PAM socket `/run/pulse-agent/agent.sock` |
 
 On first install the server package generates a self-signed TLS cert in
-`/etc/pulse-server/certs/`. To use your own, replace `cert.pem` and `key.pem`
-there, keeping the key readable by the `pulse-server` group
-(`root:pulse-server`, mode `0640`), then run `systemctl restart pulse-serverd`.
+`/etc/pulse-server/certs/` with `pulse-server-gen-cert`. To use your own,
+replace `cert.pem` and `key.pem` there, keeping the key readable by the
+`pulse-server` group (`root:pulse-server`, mode `0640`), then run
+`systemctl restart pulse-serverd`. Agents verify this cert, so read
+[Verifying the server's cert](#verifying-the-servers-cert) before setting
+them up.
 
 After installing:
 
 ```sh
-# on each agent host: point it at the server, then start it
+# on the server host: copy the server's cert somewhere agents can fetch it
+cat /etc/pulse-server/certs/cert.pem          # public, safe to copy around
+
+# on each agent host: install the server's cert, point the agent at the
+# server, then start it
+sudo install -m 0644 cert.pem /etc/pulse-agent/server.pem
 sudoedit /etc/pulse-agent/agent.toml          # server_addr = "your-server:8443"
+                                              # ca_cert = "/etc/pulse-agent/server.pem"
 sudo systemctl enable --now pulse-agentd
 
 # on the server host: create your admin user first (needs write access to the DB)
@@ -196,6 +224,46 @@ pulse-server-cli -u alice agents metrics <id>  # latest snapshots (--limit N)
 ```
 
 To set up login tracking, see [Tracking logins (PAM)](#tracking-logins-pam).
+
+### Verifying the server's cert
+
+The agent and `pulse-server-cli` always verify the server's TLS cert; there
+is no option to skip it. Without it, anyone on the network path could pose
+as the server and collect agent tokens or your login password, or tell
+agents they've been revoked.
+
+A cert is accepted if it chains to a public CA (e.g. Let's Encrypt), or to
+the extra cert you give the client:
+
+- agent: `ca_cert = "/etc/pulse-agent/server.pem"` in `agent.toml`
+- `pulse-server-cli`: `--ca-cert <file>`. Without it, it trusts the server's
+  own cert (`[web.tls] cert`, default `/etc/pulse-server/certs/cert.pem`)
+  when it can read it, so on the server host it just works.
+
+Either way, the cert must be valid for the host you connect to (the host in
+the agent's `server_addr`, or the CLI's `--server`). The self-signed cert
+from `pulse-server-gen-cert` covers the server's hostname, FQDN, its IPs at
+generation time, and `localhost`/`127.0.0.1`. If agents reach the server by
+another name (a public DNS name, a NAT address), or its IP changes,
+regenerate it with those names and redistribute it:
+
+```sh
+sudo pulse-server-gen-cert --force pulse.example.com 203.0.113.7
+sudo systemctl restart pulse-serverd
+# then copy the new cert.pem to every agent's /etc/pulse-agent/server.pem
+# and restart pulse-agentd there
+```
+
+Upgrading from a version that generated certs without a `subjectAltName`?
+The package warns about it on upgrade; regenerate the cert as above.
+
+If verification fails, the agent logs `pairing request failed` with the
+reason after `invalid peer certificate:`
+- `UnknownIssuer` / `BadSignature`: `ca_cert` unset or not the server's
+  current cert
+- `certificate not valid for name ...`: the cert doesn't cover the host in
+  `server_addr`; regenerate it with that name
+- `CaUsedAsEndEntity`: an old-style self-signed cert; regenerate it
 
 `apt remove` stops the service and keeps config and data. `apt purge` also
 deletes the database or agent identity, the logs and the generated certs. The
@@ -219,12 +287,12 @@ the event is dropped.
 
 Neither the package nor anything else edits PAM config automatically. Add
 these lines by hand (paths assume the `pulse-agent` package, which installs
-`/usr/bin/pulse-agentd`):
+`/usr/lib/pulse-agent/pulse-agentd`):
 
 **Sessions**: add to `/etc/pam.d/sshd`, `/etc/pam.d/sudo`, `/etc/pam.d/su`:
 
 ```
-session optional pam_exec.so quiet /usr/bin/pulse-agentd pam-hook
+session optional pam_exec.so quiet /usr/lib/pulse-agent/pulse-agentd pam-hook
 ```
 
 **Failed authentication** (Debian/Ubuntu `/etc/pam.d/common-auth`): put the
@@ -233,7 +301,7 @@ so a successful login skips both:
 
 ```
 auth [success=2 default=ignore] pam_unix.so nullok
-auth optional pam_exec.so quiet /usr/bin/pulse-agentd pam-hook
+auth optional pam_exec.so quiet /usr/lib/pulse-agent/pulse-agentd pam-hook
 auth requisite pam_deny.so
 ```
 
