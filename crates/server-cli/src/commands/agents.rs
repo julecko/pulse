@@ -1,6 +1,4 @@
-use protocol::{
-    AgentSummary, ApproveResponse, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest,
-};
+use protocol::{AgentSummary, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -33,18 +31,20 @@ pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
 }
 
 pub async fn approve(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
-    let resp: ApproveResponse = client
+    let resp = client
         .post(format!("{base}/agents/{id}/approve"))
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("server error: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("invalid response: {e}"))?;
+        .map_err(|e| format!("request failed: {e}"))?;
 
-    println!("approved agent {id}, token: {}", resp.token);
+    let status = resp.status();
+    if !status.is_success() {
+        // The body explains e.g. why a revoked agent can't be re-approved.
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("server error ({status}): {body}"));
+    }
+
+    println!("approved agent {id}");
     Ok(())
 }
 

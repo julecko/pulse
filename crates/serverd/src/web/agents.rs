@@ -7,15 +7,14 @@ use std::net::SocketAddr;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use protocol::{
-    AgentSummary, ApproveResponse, PairRequest, PairResponse, PairingStatus, SetPairingRequest,
-};
+use protocol::{AgentSummary, PairRequest, PairResponse, PairingStatus, SetPairingRequest};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use super::auth::{AuthedAgent, AuthedUser};
+use crate::credentials;
 
-/// Longest accepted fingerprint (agents send a 36-char UUID).
+/// Longest accepted fingerprint (new agents send 32 hex chars, agents
+/// paired before secrets existed a 36-char UUID).
 const MAX_FINGERPRINT_LEN: usize = 64;
 /// Longest accepted host info field (hostname, OS name, ...).
 const MAX_HOST_FIELD_LEN: usize = 255;
@@ -31,17 +30,23 @@ const PAIRING_CLOSED: &str = "pairing is closed: this server isn't accepting new
 struct AgentRow {
     id: i64,
     status: String,
-    token: Option<String>,
+    secret_hash: Option<String>,
 }
 
-/// Registers a new fingerprint (status starts `pending`) or, for a known
-/// fingerprint, reports its current status — `approved` responses include
-/// the bearer token every time (see [`super::auth`] for why).
+/// Registers a new agent (status starts `pending`) or, for a known
+/// fingerprint, reports its current status. Never returns a credential:
+/// the agent's own secret becomes its bearer token once approved.
 ///
-/// New fingerprints are only accepted while pairing is open (see
-/// [`set_pairing`]) and fewer than [`MAX_PENDING_AGENTS`] are pending;
-/// known ones can always poll, so approved agents keep noticing revocation
-/// while pairing is closed.
+/// - Known fingerprint: the secret must match the one it registered with,
+///   otherwise `401`, so knowing a fingerprint (which is public: logs,
+///   `GET /agents`) is worth nothing.
+/// - New fingerprint: only while pairing is open (see [`set_pairing`]) and
+///   fewer than [`MAX_PENDING_AGENTS`] are pending, and the fingerprint must
+///   be [`protocol::agent_fingerprint`] of the secret, so nobody can
+///   register a fingerprint that isn't theirs.
+///
+/// Known agents can poll while pairing is closed, so approved ones keep
+/// noticing revocation.
 pub async fn pair(
     State(pool): State<SqlitePool>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -49,16 +54,25 @@ pub async fn pair(
 ) -> Result<Json<PairResponse>, (StatusCode, String)> {
     validate_pair_request(&req)?;
     let public_ip = peer.ip().to_string();
+    let secret_hash = credentials::hash_token(&req.secret);
 
     let existing: Option<AgentRow> =
-        sqlx::query_as("SELECT id, status, token FROM agents WHERE fingerprint = ?")
+        sqlx::query_as("SELECT id, status, secret_hash FROM agents WHERE fingerprint = ?")
             .bind(&req.fingerprint)
             .fetch_optional(&pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let row = match existing {
+    let status = match existing {
         Some(row) => {
+            if row.secret_hash.as_deref() != Some(secret_hash.as_str()) {
+                tracing::warn!(peer = %peer.ip(), agent_id = row.id, "pairing poll with wrong secret");
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "wrong secret for this fingerprint".to_string(),
+                ));
+            }
+
             sqlx::query(
                 "UPDATE agents SET hostname = ?, public_ip = ?, os_name = ?, os_version = ?, kernel_version = ?, arch = ? WHERE id = ?",
             )
@@ -72,12 +86,22 @@ pub async fn pair(
             .execute(&pool)
             .await
             .map_err(|e| db_error(e, &req.hostname))?;
-            row
+            row.status
         }
         None => {
             if !pairing_open(&pool).await? {
                 tracing::debug!(peer = %peer.ip(), hostname = %req.hostname, "rejected pairing request: pairing closed");
                 return Err((StatusCode::FORBIDDEN, PAIRING_CLOSED.to_string()));
+            }
+
+            if !protocol::is_valid_agent_secret(&req.secret)
+                || req.fingerprint != protocol::agent_fingerprint(&req.secret)
+            {
+                tracing::warn!(peer = %peer.ip(), hostname = %req.hostname, "rejected pairing request: fingerprint doesn't match secret");
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "fingerprint doesn't match the secret".to_string(),
+                ));
             }
 
             let pending: i64 =
@@ -96,10 +120,11 @@ pub async fn pair(
             }
 
             sqlx::query(
-                "INSERT INTO agents (fingerprint, hostname, public_ip, os_name, os_version, kernel_version, arch, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+                "INSERT INTO agents (fingerprint, secret_hash, hostname, public_ip, os_name, os_version, kernel_version, arch, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
             )
             .bind(&req.fingerprint)
+            .bind(&secret_hash)
             .bind(&req.hostname)
             .bind(&public_ip)
             .bind(&req.os_name)
@@ -110,28 +135,32 @@ pub async fn pair(
             .await
             .map_err(|e| db_error(e, &req.hostname))?;
 
-            tracing::info!(peer = %peer.ip(), hostname = %req.hostname, "new pairing request");
-
-            AgentRow {
-                id: 0,
-                status: "pending".to_string(),
-                token: None,
-            }
+            tracing::info!(peer = %peer.ip(), hostname = %req.hostname, fingerprint = %req.fingerprint, "new pairing request");
+            "pending".to_string()
         }
     };
 
-    let response = match row.status.as_str() {
-        "approved" => PairResponse::Approved {
-            token: row.token.unwrap_or_default(),
-        },
+    Ok(Json(match status.as_str() {
+        "approved" => PairResponse::Approved,
         "revoked" => PairResponse::Revoked,
         _ => PairResponse::Pending,
-    };
-
-    Ok(Json(response))
+    }))
 }
 
 fn validate_pair_request(req: &PairRequest) -> Result<(), (StatusCode, String)> {
+    // New agents send AGENT_SECRET_LEN chars (checked on registration);
+    // agents paired before secrets existed use their old 32-char token.
+    let secret_ok = (32..=protocol::AGENT_SECRET_LEN).contains(&req.secret.len())
+        && req
+            .secret
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !secret_ok {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "secret must be lowercase hex".to_string(),
+        ));
+    }
     if req.fingerprint.is_empty() || req.fingerprint.len() > MAX_FINGERPRINT_LEN {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -283,35 +312,55 @@ pub async fn list(
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 
+/// Approves a pending agent: from then on its own secret is accepted as
+/// its bearer token. Nothing is issued or returned. Revoked agents can't be
+/// approved again, since their secret may be compromised: remove them and
+/// have the host pair again with a new identity.
 pub async fn approve(
     State(pool): State<SqlitePool>,
     Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
-) -> Result<Json<ApproveResponse>, (StatusCode, String)> {
-    let token = Uuid::new_v4().simple().to_string();
+) -> Result<StatusCode, (StatusCode, String)> {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM agents WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let result = sqlx::query("UPDATE agents SET status = 'approved', token = ? WHERE id = ?")
-        .bind(&token)
+    match status.as_deref() {
+        None => return Err((StatusCode::NOT_FOUND, "agent not found".to_string())),
+        Some("revoked") => {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "agent {id} is revoked and can't be approved again (its secret may be compromised): \
+                     remove it with `agents remove {id}`, run `pulse-agentd reset-identity` on its host, \
+                     then approve the new pairing request"
+                ),
+            ));
+        }
+        Some(_) => {}
+    }
+
+    sqlx::query("UPDATE agents SET status = 'approved' WHERE id = ?")
         .bind(id)
         .execute(&pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
-    }
-
     tracing::info!(agent_id = id, by = %user.username, "agent approved");
 
-    Ok(Json(ApproveResponse { token }))
+    Ok(StatusCode::NO_CONTENT)
 }
 
+/// Stops accepting the agent's secret. Its `secret_hash` stays, so the agent
+/// can still authenticate its pairing polls and learn it's been revoked.
 pub async fn revoke(
     State(pool): State<SqlitePool>,
     Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let result = sqlx::query("UPDATE agents SET status = 'revoked', token = NULL WHERE id = ?")
+    let result = sqlx::query("UPDATE agents SET status = 'revoked' WHERE id = ?")
         .bind(id)
         .execute(&pool)
         .await

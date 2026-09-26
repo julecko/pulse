@@ -12,10 +12,47 @@ use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() {
-    // Invoked by pam_exec, not as the daemon: report one event and exit.
-    if std::env::args().nth(1).as_deref() == Some("pam-hook") {
-        pam_hook::run();
-        return;
+    match std::env::args().nth(1).as_deref() {
+        // Invoked by pam_exec, not as the daemon: report one event and exit.
+        Some("pam-hook") => {
+            pam_hook::run();
+            return;
+        }
+        // For the admin to compare with `pulse-server-cli agents list`
+        // before approving.
+        Some("fingerprint") => {
+            match identity::load_or_create() {
+                Ok(identity) => println!("{}", identity.fingerprint),
+                Err(err) => {
+                    eprintln!("pulse-agentd: {err}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Some("reset-identity") => {
+            match identity::reset() {
+                Ok(identity) => {
+                    println!("new fingerprint: {}", identity.fingerprint);
+                    println!(
+                        "restart the agent (sudo systemctl restart pulse-agentd); it pairs as a new \
+                         request, which the server accepts while pairing is open"
+                    );
+                }
+                Err(err) => {
+                    eprintln!("pulse-agentd: {err}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Some(other) => {
+            eprintln!(
+                "pulse-agentd: unknown command {other:?} (expected none, `fingerprint`, `reset-identity` or `pam-hook`)"
+            );
+            std::process::exit(1);
+        }
+        None => {}
     }
 
     // See crates/serverd/src/main.rs for why this is needed: the shared
@@ -50,12 +87,16 @@ async fn main() {
         "agent starting"
     );
 
-    let identity = identity::load_or_create();
-    tracing::info!(
-        fingerprint = %identity.fingerprint,
-        paired = identity.token.is_some(),
-        "agent identity loaded"
-    );
+    let identity = match identity::load_or_create() {
+        Ok(identity) => identity,
+        Err(err) => {
+            // Without a persisted identity every restart would pair as a
+            // new agent, so don't run without one.
+            tracing::error!("pulse-agentd: {err}");
+            std::process::exit(1);
+        }
+    };
+    tracing::info!(fingerprint = %identity.fingerprint, "agent identity loaded");
 
     let client = http_client(&cfg).unwrap_or_else(|err| {
         tracing::error!("pulse-agentd: {err}");
@@ -68,7 +109,7 @@ async fn main() {
 
     // Tasks that call authenticated endpoints read the current token from
     // here; pairing_loop keeps it up to date.
-    let (token_tx, token_rx) = watch::channel(identity.token.clone());
+    let (token_tx, token_rx) = watch::channel(None);
 
     let auth_events = tokio::spawn(auth_events_loop(
         client.clone(),

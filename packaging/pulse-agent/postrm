@@ -4,7 +4,7 @@ set -e
 #DEBHELPER#
 
 if [ "$1" = "purge" ]; then
-    # Identity (fingerprint + token) and logs. dpkg removes the conffile
+    # Identity (fingerprint + secret) and logs. dpkg removes the conffile
     # itself. The pulse-agent system user is left in place, as Debian policy
     # recommends.
     rm -rf /var/lib/pulse-agent /var/log/pulse-agent

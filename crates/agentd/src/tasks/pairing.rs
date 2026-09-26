@@ -6,6 +6,13 @@ use tokio::sync::watch;
 
 use crate::identity::{self, Identity};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Status {
+    Pending,
+    Approved,
+    Revoked,
+}
+
 const PAIRING_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait after the server refuses a new pairing request (pairing closed, or
 /// too many pending), instead of asking again every interval.
@@ -14,21 +21,21 @@ const PAIRING_REFUSED_BACKOFF: Duration = Duration::from_secs(5 * 60);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(15 * 60);
 
 /// Polls `/agents/pair` every minute for as long as the agent runs (backing
-/// off when the server refuses or rate-limits it),
-/// keeping the stored token in sync with the server's view of this
-/// fingerprint. A token existing locally is never treated as proof of
-/// approval by itself — every tick re-confirms the actual status, since a
-/// previously-approved agent can be revoked or removed server-side at any
-/// time. Once approval-gated features (e.g. sending metrics) exist, they
-/// should check the current state this loop maintains rather than just
-/// "is there a token". The current token is published on `token_tx` for
-/// those tasks.
+/// off when the server refuses or rate-limits it), proving ownership of the
+/// fingerprint with the agent's secret each time. The server never sends a
+/// credential back; it just reports the status, and once that's `approved`
+/// the secret itself is the bearer token. Every poll re-confirms the
+/// status, since an approved agent can be revoked or removed at any time.
+///
+/// The bearer token for the approval-gated tasks (metrics, auth events) is
+/// published on `token_tx`: the secret while approved, `None` otherwise.
 pub async fn pairing_loop(
     client: reqwest::Client,
     url: String,
-    mut identity: Identity,
+    identity: Identity,
     token_tx: watch::Sender<Option<String>>,
 ) {
+    let mut last_status = None;
     let mut delay = Duration::ZERO;
     loop {
         tokio::time::sleep(delay).await;
@@ -36,7 +43,8 @@ pub async fn pairing_loop(
 
         let host = identity::host_info();
         let req = PairRequest {
-            fingerprint: identity.fingerprint.to_string(),
+            fingerprint: identity.fingerprint.clone(),
+            secret: identity.secret.clone(),
             hostname: host.hostname,
             os_name: host.os_name,
             os_version: host.os_version,
@@ -89,36 +97,38 @@ pub async fn pairing_loop(
             continue;
         }
 
-        match response.json::<PairResponse>().await {
-            Ok(PairResponse::Approved { token }) => {
-                tracing::info!("agent approved");
-                if identity.token.as_deref() != Some(token.as_str()) {
-                    identity.token = Some(token);
-                    identity::save(&identity);
-                }
-            }
-            Ok(PairResponse::Pending) => {
-                tracing::debug!("pairing still pending approval");
-                if identity.token.take().is_some() {
-                    identity::save(&identity);
-                }
-            }
-            Ok(PairResponse::Revoked) => {
-                tracing::warn!("agent access revoked");
-                if identity.token.take().is_some() {
-                    identity::save(&identity);
-                }
-            }
+        let status = match response.json::<PairResponse>().await {
+            Ok(PairResponse::Approved) => Status::Approved,
+            Ok(PairResponse::Pending) => Status::Pending,
+            Ok(PairResponse::Revoked) => Status::Revoked,
             Err(err) => {
                 tracing::warn!(%err, %status, "failed to parse pairing response");
+                continue;
             }
+        };
+
+        // Log only changes; this runs every minute.
+        if last_status != Some(status) {
+            match status {
+                Status::Approved => tracing::info!("agent approved"),
+                Status::Pending => tracing::info!(
+                    fingerprint = %identity.fingerprint,
+                    "waiting for approval on the server"
+                ),
+                Status::Revoked => tracing::warn!(
+                    "agent access revoked; to pair again: `agents remove <id>` on the server, \
+                     then `pulse-agentd reset-identity` here and restart"
+                ),
+            }
+            last_status = Some(status);
         }
 
+        let token = (status == Status::Approved).then(|| identity.secret.clone());
         token_tx.send_if_modified(|current| {
-            if *current == identity.token {
+            if *current == token {
                 return false;
             }
-            current.clone_from(&identity.token);
+            *current = token;
             true
         });
     }

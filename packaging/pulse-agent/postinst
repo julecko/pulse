@@ -17,7 +17,9 @@ pulse-agent is installed but not started. To finish setting it up:
   3. Start the agent and enable it at boot:
        sudo systemctl enable --now pulse-agentd
   4. On the server (logs in as a Pulse user), open pairing if it's
-     closed (it is by default), approve the agent, then close it again:
+     closed (it is by default), approve the agent, then close it again.
+     Before approving, check that the fingerprint in `agents list` is the
+     one this host prints with `sudo /usr/lib/pulse-agent/pulse-agentd fingerprint`:
        pulse-server-cli -u <user> agents pairing open --minutes 15
        pulse-server-cli -u <user> agents list
        pulse-server-cli -u <user> agents approve <id>

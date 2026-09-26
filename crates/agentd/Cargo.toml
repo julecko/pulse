@@ -10,6 +10,7 @@ name = "pulse-agentd"
 path = "src/main.rs"
 
 [dependencies]
+getrandom = "0.4"
 protocol = { path = "../protocol" }
 pulse-shared = { path = "../pulse-shared" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -20,7 +21,6 @@ sysinfo = "0.38.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
 toml = "0.8"
 tracing = "0.1"
-uuid = { version = "1", features = ["v4", "serde"] }
 
 # Debian package: see packaging/build-debs.sh.
 [package.metadata.deb]

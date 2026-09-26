@@ -57,7 +57,8 @@ pub enum AgentsCommand {
         #[command(subcommand)]
         command: PairingCommand,
     },
-    /// Approve a pending agent, printing the issued token
+    /// Approve a pending agent (compare its fingerprint with
+    /// `pulse-agentd fingerprint` on the host first)
     Approve { id: i64 },
     /// Revoke an agent's access
     Revoke { id: i64 },

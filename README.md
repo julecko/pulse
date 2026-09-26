@@ -221,6 +221,8 @@ sudo pulse-server-cli users add alice
 # commands log in and ask for the password
 pulse-server-cli -u alice agents pairing open --minutes 15
 pulse-server-cli -u alice agents list
+# check the fingerprint first: on the agent host,
+#   sudo /usr/lib/pulse-agent/pulse-agentd fingerprint
 pulse-server-cli -u alice agents approve <id>
 pulse-server-cli -u alice agents pairing close
 pulse-server-cli -u alice agents metrics <id>  # latest snapshots (--limit N)
@@ -252,6 +254,37 @@ hostname gets `409`.
 
 Agents poll `/agents/pair` once a minute.
 
+### Agent identity
+
+On first start each agent generates a random **secret** (32 bytes) and
+derives its public **fingerprint** from it; both are stored in
+`/var/lib/pulse-agent/identity.toml` (mode 0600, agent's user only).
+
+- The agent sends the secret with every pairing poll, proving it owns the
+  fingerprint. A poll for a known fingerprint with the wrong secret gets
+  `401`, and a new fingerprint must be the one derived from its secret, so
+  nobody can register or take over a fingerprint that isn't theirs.
+- Once approved, the secret itself is the agent's bearer token. The server
+  never sends a credential back and stores only the secret's SHA-256, so a
+  leaked database, log or `agents list` output gives nothing away. The
+  fingerprint is public.
+- Compare fingerprints before approving: `agents list` on the server,
+  `sudo /usr/lib/pulse-agent/pulse-agentd fingerprint` on the host.
+
+Revoking an agent is final for its secret (it may be compromised), so a
+revoked agent can't be approved again. To bring the host back:
+
+```sh
+pulse-server-cli -u alice agents remove <id>             # on the server
+sudo /usr/lib/pulse-agent/pulse-agentd reset-identity   # on the host: new secret
+sudo systemctl restart pulse-agentd                     # pairs as a new request
+```
+
+Upgrading from a version where the server handed out tokens: approved
+agents keep working (the server converts their stored token, and the agent
+adopts it as its secret). Pending requests are dropped; those agents
+request again, with a secret, next time pairing is open.
+
 ### Rate limiting
 
 The routes anyone can reach are rate-limited per client IP (IPv6: per /64),
@@ -275,7 +308,7 @@ the proxy. Password checks are also limited to a few at a time (each takes
 
 The agent and `pulse-server-cli` always verify the server's TLS cert; there
 is no option to skip it. Without it, anyone on the network path could pose
-as the server and collect agent tokens or your login password, or tell
+as the server and collect agent secrets or your login password, or tell
 agents they've been revoked.
 
 A cert is accepted if it chains to a public CA (e.g. Let's Encrypt), or to
@@ -321,7 +354,7 @@ The agent can report SSH logins, `sudo`/`su` sessions and failed password
 attempts. PAM calls `pulse-agentd pam-hook` through `pam_exec.so`. The hook writes
 the event to the agent's local Unix socket (`pam_socket`: `data/agent.sock`
 in debug, `/run/pulse-agent/agent.sock` in release) and exits. The agent then
-forwards events to the server with its bearer token
+forwards events to the server with its bearer token (its secret)
 (`POST /agents/me/auth-events`), so the server links each event to its host
 from the token. The hook never sees the token.
 

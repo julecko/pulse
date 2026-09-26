@@ -20,6 +20,8 @@ pub enum DbError {
     Open(PathBuf, sqlx::Error),
     #[error("running migrations: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("hashing legacy agent tokens: {0}")]
+    LegacyTokens(sqlx::Error),
 }
 
 pub async fn connect(cfg: &DbConfig) -> Result<SqlitePool, DbError> {
@@ -39,8 +41,39 @@ pub async fn connect(cfg: &DbConfig) -> Result<SqlitePool, DbError> {
         .map_err(|e| DbError::Open(path.clone(), e))?;
 
     sqlx::migrate!("./migrations").run(&pool).await?;
+    hash_legacy_agent_tokens(&pool).await?;
 
     tracing::info!(path = %path.display(), "database ready");
 
     Ok(pool)
+}
+
+/// Agents approved before migration 0008 have a plaintext `token`, which
+/// is now their secret. Hash it into `secret_hash` (SQLite can't) and drop
+/// the plaintext, so those agents keep working. A no-op once done.
+async fn hash_legacy_agent_tokens(pool: &SqlitePool) -> Result<(), DbError> {
+    let legacy: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, token FROM agents WHERE token IS NOT NULL")
+            .fetch_all(pool)
+            .await
+            .map_err(DbError::LegacyTokens)?;
+
+    for (id, token) in &legacy {
+        sqlx::query("UPDATE agents SET secret_hash = ?, token = NULL WHERE id = ?")
+            .bind(crate::credentials::hash_token(token))
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(DbError::LegacyTokens)?;
+    }
+    if !legacy.is_empty() {
+        // SQLite may leave the old plaintext in freed pages; rebuilding the
+        // file drops them.
+        sqlx::query("VACUUM")
+            .execute(pool)
+            .await
+            .map_err(DbError::LegacyTokens)?;
+        tracing::info!(count = legacy.len(), "hashed legacy agent tokens");
+    }
+    Ok(())
 }
