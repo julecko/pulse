@@ -249,8 +249,9 @@ While it's closed, `POST /agents/pair` refuses unknown agents with `403`
 (pending, approved or revoked) can always poll their status, so approved
 agents keep working and still notice being revoked. While it's open, at most
 100 requests can be pending at once; more get `503` until you approve or
-remove some. Hostnames must be unique: a second agent reporting a taken
-hostname gets `409`.
+remove some. Hostnames don't have to be unique: agents are identified by
+their ID and fingerprint, so two hosts with the same name (e.g. cloned VMs)
+can both pair; tell them apart by fingerprint and IP.
 
 Agents poll `/agents/pair` once a minute.
 

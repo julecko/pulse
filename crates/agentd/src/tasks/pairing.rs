@@ -82,7 +82,7 @@ pub async fn pairing_loop(
             status,
             StatusCode::FORBIDDEN | StatusCode::CONFLICT | StatusCode::SERVICE_UNAVAILABLE
         ) {
-            // Pairing closed, hostname already taken, or too many pending
+            // Pairing closed, a registration race, or too many pending
             // requests; the body says which. None fixes itself quickly.
             let body = response.text().await.unwrap_or_default();
             delay = PAIRING_REFUSED_BACKOFF;

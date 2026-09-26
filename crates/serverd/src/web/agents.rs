@@ -85,7 +85,7 @@ pub async fn pair(
             .bind(row.id)
             .execute(&pool)
             .await
-            .map_err(|e| db_error(e, &req.hostname))?;
+            .map_err(db_error)?;
             row.status
         }
         None => {
@@ -133,7 +133,7 @@ pub async fn pair(
             .bind(&req.arch)
             .execute(&pool)
             .await
-            .map_err(|e| db_error(e, &req.hostname))?;
+            .map_err(db_error)?;
 
             tracing::info!(peer = %peer.ip(), hostname = %req.hostname, fingerprint = %req.fingerprint, "new pairing request");
             "pending".to_string()
@@ -184,13 +184,15 @@ fn validate_pair_request(req: &PairRequest) -> Result<(), (StatusCode, String)> 
     Ok(())
 }
 
-/// Hostnames are unique, so a second agent reporting a taken hostname gets
-/// `409` rather than a raw database error.
-fn db_error(e: sqlx::Error, hostname: &str) -> (StatusCode, String) {
+/// The only unique columns an agent row gets are its fingerprint and secret
+/// hash (hostnames may repeat), so a violation means two requests raced to
+/// register the same agent; the loser gets `409` rather than a raw database
+/// error, and its next poll finds the row.
+fn db_error(e: sqlx::Error) -> (StatusCode, String) {
     match e {
         sqlx::Error::Database(db) if db.is_unique_violation() => (
             StatusCode::CONFLICT,
-            format!("an agent with hostname {hostname:?} already exists"),
+            "this agent is already registered".to_string(),
         ),
         e => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
