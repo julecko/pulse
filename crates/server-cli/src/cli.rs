@@ -201,8 +201,8 @@ pub enum RulesCommand {
         /// Shown in each alert's title: "<name> on <hostname>"
         name: String,
         /// cpu_usage_percent, memory_used_percent, swap_used_percent,
-        /// disk_used_percent (fullest disk), load_avg_one, load_avg_five
-        /// or load_avg_fifteen
+        /// disk_used_percent (fullest disk), load_avg_one, load_avg_five,
+        /// load_avg_fifteen, network_rx_mbps or network_tx_mbps (Mbit/s)
         #[arg(long)]
         metric: AlertMetric,
         /// gt, ge, lt or le (or >, >=, <, <= quoted)

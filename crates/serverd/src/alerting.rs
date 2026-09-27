@@ -267,7 +267,20 @@ fn metric_value(m: &Metrics, metric: AlertMetric) -> Option<(f64, Option<String>
         AlertMetric::LoadAvgOne => m.linux.as_ref().map(|l| (l.load_avg_one, None)),
         AlertMetric::LoadAvgFive => m.linux.as_ref().map(|l| (l.load_avg_five, None)),
         AlertMetric::LoadAvgFifteen => m.linux.as_ref().map(|l| (l.load_avg_fifteen, None)),
+        AlertMetric::NetworkRxMbps => m
+            .network
+            .as_ref()
+            .map(|n| (bytes_to_mbps(n.rx_bytes_per_sec), None)),
+        AlertMetric::NetworkTxMbps => m
+            .network
+            .as_ref()
+            .map(|n| (bytes_to_mbps(n.tx_bytes_per_sec), None)),
     }
+}
+
+/// Bytes per second to megabits per second.
+fn bytes_to_mbps(bytes_per_sec: f64) -> f64 {
+    bytes_per_sec * 8.0 / 1_000_000.0
 }
 
 /// `300` -> `5m`, `7200` -> `2h`, `90` -> `90s`.
@@ -285,7 +298,7 @@ pub fn human_duration(secs: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use protocol::{CpuInfo, DiskInfo, MemoryInfo};
+    use protocol::{CpuInfo, DiskInfo, MemoryInfo, NetworkInfo};
 
     use super::*;
 
@@ -321,6 +334,11 @@ mod tests {
                 disk("/empty", 0, 0),
             ],
             linux: None,
+            network: Some(NetworkInfo {
+                rx_bytes_per_sec: 12_500_000.0,
+                tx_bytes_per_sec: 250_000.0,
+                interfaces: vec![],
+            }),
         };
         assert_eq!(
             metric_value(&m, AlertMetric::CpuUsagePercent),
@@ -336,6 +354,14 @@ mod tests {
         assert_eq!(
             metric_value(&m, AlertMetric::DiskUsedPercent),
             Some((90.0, Some("/var".to_string())))
+        );
+        assert_eq!(
+            metric_value(&m, AlertMetric::NetworkRxMbps),
+            Some((100.0, None))
+        );
+        assert_eq!(
+            metric_value(&m, AlertMetric::NetworkTxMbps),
+            Some((2.0, None))
         );
     }
 

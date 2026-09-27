@@ -3,6 +3,7 @@ mod cpu;
 mod disk;
 mod linux;
 mod memory;
+mod network;
 
 pub use collector::{Collector, Context};
 
@@ -13,6 +14,7 @@ fn registry() -> Vec<Box<dyn Collector>> {
         Box::new(cpu::CpuCollector),
         Box::new(memory::MemoryCollector),
         Box::new(disk::DiskCollector),
+        Box::new(network::NetworkCollector),
     ];
 
     #[cfg(target_os = "linux")]
@@ -21,8 +23,8 @@ fn registry() -> Vec<Box<dyn Collector>> {
     collectors
 }
 
-/// Takes one snapshot. Reuse the same `ctx` between calls: CPU usage is
-/// averaged over the time since the previous call.
+/// Takes one snapshot. Reuse the same `ctx` between calls: CPU usage and
+/// network traffic are averaged over the time since the previous call.
 pub fn collect(ctx: &mut Context) -> Metrics {
     let mut metrics = Metrics::default();
 
