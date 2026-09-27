@@ -77,6 +77,14 @@ pub struct AuthEventRecord {
     pub rhost: Option<String>,
     pub tty: Option<String>,
     pub occurred_at: String,
+    /// Where `rhost` is, if it's a public IP the server's GeoIP database
+    /// knows (ISO code, e.g. `SK`).
+    #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub country_name: Option<String>,
+    #[serde(default)]
+    pub city: Option<String>,
 }
 
 /// Which of an agent's PAM events the server pushes to every registered

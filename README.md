@@ -441,6 +441,13 @@ forwards events to the server with its bearer token (its secret)
 (`POST /agents/me/auth-events`), so the server links each event to its host
 from the token. The hook never sees the token.
 
+If an event's remote host (`rhost`, e.g. the SSH client) is a public IP
+and the server has a GeoIP database (see [Geo alerts](#geo-alerts)), the
+server stores where it is with the event: country and city, shown in the
+LOCATION column of `agents events` and in `GET /agents/{id}/auth-events`
+(`country_code`, `country_name`, `city`). The lookup happens when the event
+arrives, so it records where the IP was then.
+
 The socket only accepts events from root (which pam_exec runs as for
 sshd/sudo/su) or from the agent's own user, so other local users can't
 forge events. The agent keeps no history: each event is sent on its own as
@@ -604,6 +611,61 @@ pulse-server-cli -u alice alerts ack <id>           # mark as seen
 quoted), and `--for` takes `90s`, `5m`, `1h` or plain seconds. How long a
 condition has held is kept in memory, so after a server restart a `--for`
 window starts over.
+
+### Offline alerts
+
+The server can tell you when an agent goes quiet: its host is down, cut off
+the network, or the agent crashed. Set per agent how long it may go without
+sending metrics; after that an alert is recorded and pushed (`critical`,
+"web01 stopped sending metrics"):
+
+```sh
+pulse-server-cli -u alice agents offline-alert set 3 5m    # 90s, 10m, 2h, 1d; 1 minute to 30 days
+pulse-server-cli -u alice agents offline-alert list        # limits, last metrics, OFFLINE state
+pulse-server-cli -u alice agents offline-alert off 3
+```
+
+It's off for every agent until you set it. Use a few of the agent's
+metrics intervals (`interval_secs`, 60 by default), e.g. `5m`, so a slow
+network doesn't trip it. Only approved agents are watched; the server
+checks every 15 seconds.
+
+When the agent sends metrics again, its alert resolves on its own and a
+second push says it's back (`info`). Acknowledging an offline alert doesn't
+resolve it, since the agent is still offline; turning the check off for it
+does. There's at most one active offline alert per agent, so a long outage
+is one alert and one push. Time the server itself was down doesn't count:
+agents can't report to a stopped server, so after a restart each agent
+gets its full limit again before it's considered offline.
+
+HTTP routes, for logged-in users: `GET /agents/offline-alerts`,
+`PUT /agents/{id}/offline-alert` (`{"after_secs": 300}`, or `null` for
+off). Types are in `crates/protocol/src/offline.rs`.
+
+### Offline alerts
+
+Each agent can be watched for going quiet: if an approved agent sends no
+metrics for longer than its limit (the host is down, cut off, or the agent
+crashed), the server raises a `critical` alert and pushes it. As soon as
+metrics arrive again, the alert resolves and a second push says it's back.
+Off by default; set it per agent:
+
+```sh
+pulse-server-cli -u alice agents offline-alert set 3 5m    # 90s, 5m, 2h, 1d (1 minute to 30 days)
+pulse-server-cli -u alice agents offline-alert list        # limits, last metrics, OFFLINE state
+pulse-server-cli -u alice agents offline-alert off 3       # also resolves its offline alert
+```
+
+Pick a few of the agent's metrics intervals (`interval_secs`, 60 by
+default), so one slow or lost snapshot doesn't trip it; 5 minutes is a good
+start. The server checks every 15 seconds. Time the server itself was down
+doesn't count (agents can't reach a stopped server), so a server restart
+doesn't flag every agent: each gets its full limit from the restart. Only
+approved agents are watched. Acknowledging an offline alert doesn't resolve
+it; the agent sending metrics again does. Offline alerts are marked in the
+`offline_alerts` table (joined to `alerts`, like geo alerts). HTTP routes,
+for logged-in users: `GET /agents/offline-alerts`,
+`PUT /agents/{id}/offline-alert` (`{"after_secs": 300}`, or `null` for off).
 
 ### Geo alerts
 

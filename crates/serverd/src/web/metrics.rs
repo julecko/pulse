@@ -83,6 +83,7 @@ pub async fn ingest(
 
     tracing::debug!(agent_id = agent.id, "stored metrics");
 
+    crate::offline::recovered(&pool, &alerting, agent.id).await;
     alerting.evaluate(&pool, agent.id, &m).await;
 
     Ok(StatusCode::NO_CONTENT)

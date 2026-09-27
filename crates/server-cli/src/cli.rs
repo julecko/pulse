@@ -110,6 +110,12 @@ pub enum AgentsCommand {
         #[command(subcommand)]
         command: PamNotifyCommand,
     },
+    /// Alert (and push) when an agent sends no metrics for too long, e.g.
+    /// its host is down or cut off
+    OfflineAlert {
+        #[command(subcommand)]
+        command: OfflineAlertCommand,
+    },
     /// Show an agent's most recent metrics snapshots
     Metrics {
         id: i64,
@@ -117,6 +123,22 @@ pub enum AgentsCommand {
         #[arg(long, default_value_t = 10)]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+pub enum OfflineAlertCommand {
+    /// Show every agent's limit, last metrics and whether it's offline
+    List,
+    /// Alert when agent ID sends no metrics for AFTER: 90s, 10m, 2h, 1d
+    /// (1 minute to 30 days). Use a few of its metrics intervals (60s by
+    /// default), e.g. 5m
+    Set {
+        id: i64,
+        #[arg(value_parser = parse_duration)]
+        after: u32,
+    },
+    /// Stop watching agent ID (resolves its offline alert, if any)
+    Off { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -184,7 +206,7 @@ pub enum RulesCommand {
         /// Only watch this agent (default: every agent)
         #[arg(long)]
         agent: Option<i64>,
-        /// Fire only once the condition has held this long: 90s, 5m, 1h,
+        /// Fire only once the condition has held this long: 90s, 5m, 1h, 1d,
         /// or plain seconds (default: at once)
         #[arg(long = "for", value_parser = parse_duration, default_value = "0")]
         duration_secs: u32,
@@ -275,7 +297,7 @@ pub enum RetentionCommand {
     Reset { data: RetentionData },
 }
 
-/// `90s`, `5m`, `1h`, or plain seconds.
+/// `90s`, `5m`, `1h`, `2d`, or plain seconds.
 fn parse_duration(s: &str) -> Result<u32, String> {
     let (digits, unit) = match s.char_indices().last() {
         Some((i, c)) if c.is_ascii_alphabetic() => (&s[..i], c),
@@ -288,7 +310,8 @@ fn parse_duration(s: &str) -> Result<u32, String> {
         's' => 1,
         'm' => 60,
         'h' => 3600,
-        _ => return Err(format!("invalid duration unit in {s:?} (use s, m or h)")),
+        'd' => 86400,
+        _ => return Err(format!("invalid duration unit in {s:?} (use s, m, h or d)")),
     };
     n.checked_mul(factor)
         .ok_or_else(|| format!("duration {s:?} is too long"))
@@ -305,7 +328,8 @@ mod tests {
         assert_eq!(parse_duration("90s"), Ok(90));
         assert_eq!(parse_duration("5m"), Ok(300));
         assert_eq!(parse_duration("2h"), Ok(7200));
-        assert!(parse_duration("5d").is_err());
+        assert_eq!(parse_duration("2d"), Ok(172800));
+        assert!(parse_duration("5w").is_err());
         assert!(parse_duration("m").is_err());
         assert!(parse_duration("").is_err());
     }

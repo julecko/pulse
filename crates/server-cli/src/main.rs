@@ -10,8 +10,9 @@ mod session;
 
 use clap::Parser;
 use cli::{
-    AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, GeoAlertsCommand, OnOff,
-    PairingCommand, PamNotifyCommand, RetentionCommand, RulesCommand, UsersCommand,
+    AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, GeoAlertsCommand,
+    OfflineAlertCommand, OnOff, PairingCommand, PamNotifyCommand, RetentionCommand, RulesCommand,
+    UsersCommand,
 };
 use reqwest::header::HeaderMap;
 use session::Session;
@@ -137,6 +138,18 @@ async fn run_agents(
         AgentsCommand::Events { id } => commands::agents::events(client, base, id).await,
         AgentsCommand::Metrics { id, limit } => {
             commands::agents::metrics(client, base, id, limit).await
+        }
+        AgentsCommand::OfflineAlert { command } => {
+            use commands::agents as a;
+            match command {
+                OfflineAlertCommand::List => a::offline_alert_list(client, base).await,
+                OfflineAlertCommand::Set { id, after } => {
+                    a::offline_alert_set(client, base, id, Some(after)).await
+                }
+                OfflineAlertCommand::Off { id } => {
+                    a::offline_alert_set(client, base, id, None).await
+                }
+            }
         }
         AgentsCommand::PamNotify { command } => {
             use commands::agents as a;

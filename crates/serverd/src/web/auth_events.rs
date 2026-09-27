@@ -55,9 +55,13 @@ pub async fn ingest(
     Extension(NotifyLimiter(limiter)): Extension<NotifyLimiter>,
     Json(event): Json<AuthEvent>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    let located = alerting.geo().locate(event.rhost.as_deref());
+    let location = located.as_ref().map(|(_, location)| location);
+
     sqlx::query(
-        "INSERT INTO auth_events (agent_id, kind, service, user, ruser, rhost, tty, occurred_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime(?, 'unixepoch'))",
+        "INSERT INTO auth_events (agent_id, kind, service, user, ruser, rhost, tty, occurred_at,
+                                  country_code, country_name, city)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime(?, 'unixepoch'), ?, ?, ?)",
     )
     .bind(agent.id)
     .bind(event.kind.as_str())
@@ -67,6 +71,9 @@ pub async fn ingest(
     .bind(event.rhost.as_deref().map(truncate))
     .bind(event.tty.as_deref().map(truncate))
     .bind(event.occurred_at)
+    .bind(location.and_then(|l| l.country_code.as_deref()))
+    .bind(location.and_then(|l| l.country_name.as_deref()))
+    .bind(location.and_then(|l| l.city.as_deref()))
     .execute(&pool)
     .await
     .map_err(super::internal_error)?;
@@ -80,7 +87,14 @@ pub async fn ingest(
     push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
     alerting
         .geo()
-        .evaluate(&pool, alerting.push(), limiter.as_deref(), agent.id, &event)
+        .evaluate(
+            &pool,
+            alerting.push(),
+            limiter.as_deref(),
+            agent.id,
+            &event,
+            located.as_ref(),
+        )
         .await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -182,6 +196,9 @@ struct AuthEventRow {
     rhost: Option<String>,
     tty: Option<String>,
     occurred_at: String,
+    country_code: Option<String>,
+    country_name: Option<String>,
+    city: Option<String>,
 }
 
 impl From<AuthEventRow> for AuthEventRecord {
@@ -195,6 +212,9 @@ impl From<AuthEventRow> for AuthEventRecord {
             rhost: row.rhost,
             tty: row.tty,
             occurred_at: row.occurred_at,
+            country_code: row.country_code,
+            country_name: row.country_name,
+            city: row.city,
         }
     }
 }
@@ -205,7 +225,9 @@ pub async fn list(
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<AuthEventRecord>>, (StatusCode, String)> {
     let rows: Vec<AuthEventRow> = sqlx::query_as(
-        "SELECT id, kind, service, user, ruser, rhost, tty, occurred_at FROM auth_events
+        "SELECT id, kind, service, user, ruser, rhost, tty, occurred_at,
+                country_code, country_name, city
+         FROM auth_events
          WHERE agent_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?",
     )
     .bind(id)

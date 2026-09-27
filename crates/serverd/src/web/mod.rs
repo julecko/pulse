@@ -7,6 +7,7 @@ mod conn_limit;
 mod geo_alerts;
 mod metrics;
 mod notify;
+mod offline;
 mod pam_notifications;
 mod push_devices;
 mod rate_limit;

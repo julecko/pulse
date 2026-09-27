@@ -1,6 +1,7 @@
 use protocol::{
-    AgentSummary, AuthEventKind, AuthEventRecord, MetricsRecord, PairingStatus, PamNotifications,
-    SetPairingRequest, SetPamNotifications, escape_for_display as esc,
+    AgentSummary, AuthEventKind, AuthEventRecord, MetricsRecord, OfflineAlertSetting,
+    PairingStatus, PamNotifications, SetOfflineAlert, SetPairingRequest, SetPamNotifications,
+    escape_for_display as esc,
 };
 
 use super::alerts::{json, send};
@@ -118,12 +119,17 @@ pub async fn events(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
     }
 
     println!(
-        "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10}",
-        "OCCURRED_AT", "KIND", "SERVICE", "USER", "RUSER", "RHOST", "TTY"
+        "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10} {:<}",
+        "OCCURRED_AT", "KIND", "SERVICE", "USER", "RUSER", "RHOST", "TTY", "LOCATION"
     );
     for event in events {
+        let location = match (&event.city, &event.country_code) {
+            (Some(city), Some(code)) => format!("{city}, {code}"),
+            (None, Some(code)) => event.country_name.clone().unwrap_or_else(|| code.clone()),
+            _ => "-".to_string(),
+        };
         println!(
-            "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10}",
+            "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10} {:<}",
             esc(&event.occurred_at),
             esc(&event.kind),
             esc(&event.service),
@@ -131,6 +137,7 @@ pub async fn events(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
             esc(event.ruser.as_deref().unwrap_or("-")),
             esc(event.rhost.as_deref().unwrap_or("-")),
             esc(event.tty.as_deref().unwrap_or("-")),
+            esc(&location),
         );
     }
     Ok(())
@@ -334,4 +341,90 @@ fn print_pam_notify(settings: &PamNotifications) {
         esc(&settings.hostname),
         pam_kinds(settings)
     );
+}
+
+fn duration(secs: u32) -> String {
+    match secs {
+        s if s % 86400 == 0 => format!("{}d", s / 86400),
+        s if s % 3600 == 0 => format!("{}h", s / 3600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
+fn offline_state(s: &OfflineAlertSetting) -> &'static str {
+    match (s.after_secs, s.offline, s.status.as_str()) {
+        (None, _, _) => "-",
+        (Some(_), true, _) => "OFFLINE",
+        (Some(_), false, "approved") => "ok",
+        (Some(_), false, _) => "not approved",
+    }
+}
+
+/// Every agent's offline alert limit and state.
+pub async fn offline_alert_list(client: &reqwest::Client, base: &str) -> Result<(), String> {
+    let all: Vec<OfflineAlertSetting> =
+        json(send(client.get(format!("{base}/agents/offline-alerts"))).await?).await?;
+    if all.is_empty() {
+        println!("no agents");
+        return Ok(());
+    }
+    println!(
+        "{:<4} {:<20} {:<10} {:<13} {:<20} {:<}",
+        "ID", "HOSTNAME", "STATUS", "ALERT AFTER", "LAST METRICS (UTC)", "STATE"
+    );
+    for s in all {
+        println!(
+            "{:<4} {:<20} {:<10} {:<13} {:<20} {:<}",
+            s.agent_id,
+            esc(&s.hostname),
+            esc(&s.status),
+            s.after_secs.map_or_else(|| "off".to_string(), duration),
+            s.last_metrics_at
+                .as_deref()
+                .map_or_else(|| "never".into(), esc),
+            offline_state(&s)
+        );
+    }
+    Ok(())
+}
+
+/// Sets (`Some`) or turns off (`None`) agent `id`'s offline alert.
+pub async fn offline_alert_set(
+    client: &reqwest::Client,
+    base: &str,
+    id: i64,
+    after_secs: Option<u32>,
+) -> Result<(), String> {
+    let s: OfflineAlertSetting = json(
+        send(
+            client
+                .put(format!("{base}/agents/{id}/offline-alert"))
+                .json(&SetOfflineAlert { after_secs }),
+        )
+        .await?,
+    )
+    .await?;
+    match s.after_secs {
+        Some(secs) => {
+            println!(
+                "agent {} ({}): alert after {} without metrics",
+                s.agent_id,
+                esc(&s.hostname),
+                duration(secs)
+            );
+            if s.status != "approved" {
+                println!(
+                    "note: it's {}; only approved agents are watched",
+                    esc(&s.status)
+                );
+            }
+        }
+        None => println!(
+            "agent {} ({}): offline alert off",
+            s.agent_id,
+            esc(&s.hostname)
+        ),
+    }
+    Ok(())
 }

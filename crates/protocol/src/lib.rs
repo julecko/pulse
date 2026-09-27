@@ -3,6 +3,7 @@ mod auth;
 mod geo;
 mod metrics;
 mod notify;
+mod offline;
 mod pairing;
 mod retention;
 mod text;
@@ -20,6 +21,9 @@ pub use geo::{
 pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
 pub use notify::{
     LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,
+};
+pub use offline::{
+    MAX_OFFLINE_AFTER_SECS, MIN_OFFLINE_AFTER_SECS, OfflineAlertSetting, SetOfflineAlert,
 };
 pub use pairing::{
     AGENT_SECRET_LEN, AgentSummary, PairRequest, PairResponse, PairingStatus, SetPairingRequest,

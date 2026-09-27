@@ -4,6 +4,7 @@ mod credentials;
 mod db;
 mod geo_alerts;
 mod geoip;
+mod offline;
 mod push;
 mod web;
 
@@ -55,6 +56,7 @@ async fn main() {
     });
     let geoip = geoip::GeoIp::load(&cfg.geoip);
     let alerting = alerting::Alerting::new(push, geo_alerts::GeoAlerts::new(geoip));
+    tokio::spawn(offline::watch(pool.clone(), alerting.clone()));
 
     if let Err(err) = web::serve(&cfg.web, pool, alerting, retention).await {
         tracing::error!("pulse-serverd: web server error: {err}");

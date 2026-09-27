@@ -272,7 +272,9 @@ fn metric_value(m: &Metrics, metric: AlertMetric) -> Option<(f64, Option<String>
 
 /// `300` -> `5m`, `7200` -> `2h`, `90` -> `90s`.
 pub fn human_duration(secs: i64) -> String {
-    if secs >= 3600 && secs % 3600 == 0 {
+    if secs >= 86400 && secs % 86400 == 0 {
+        format!("{}d", secs / 86400)
+    } else if secs >= 3600 && secs % 3600 == 0 {
         format!("{}h", secs / 3600)
     } else if secs >= 60 && secs % 60 == 0 {
         format!("{}m", secs / 60)

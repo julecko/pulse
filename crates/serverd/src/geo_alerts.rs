@@ -48,14 +48,23 @@ impl GeoAlerts {
         Self { geoip }
     }
 
+    /// The client IP of a PAM event's `rhost` and where it is, if it's a
+    /// public IP and a database is loaded. Looked up once per event, for
+    /// both storing it and [`Self::evaluate`].
+    pub fn locate(&self, rhost: Option<&str>) -> Option<(IpAddr, Location)> {
+        let ip = client_ip(rhost?)?;
+        Some((ip, self.geoip.lookup(ip)?))
+    }
+
     /// See [`GeoIp::database`].
     pub fn database(&self) -> Option<(&Path, &str, u64)> {
         self.geoip.database()
     }
 
-    /// Checks one stored PAM event (see the module docs). Errors are
-    /// logged, never returned: they mustn't fail the ingest. `limiter` is
-    /// the agent's push budget, shared with its other pushes.
+    /// Checks one stored PAM event (see the module docs), `located` by
+    /// [`Self::locate`]. Errors are logged, never returned: they mustn't
+    /// fail the ingest. `limiter` is the agent's push budget, shared with
+    /// its other pushes.
     pub async fn evaluate(
         &self,
         pool: &SqlitePool,
@@ -63,9 +72,10 @@ impl GeoAlerts {
         limiter: Option<&RateLimiter<i64>>,
         agent_id: i64,
         event: &AuthEvent,
+        located: Option<&(IpAddr, Location)>,
     ) {
         if let Err(err) = self
-            .evaluate_inner(pool, push, limiter, agent_id, event)
+            .evaluate_inner(pool, push, limiter, agent_id, event, located)
             .await
         {
             tracing::warn!(%err, agent_id, "geo alert check failed");
@@ -79,6 +89,7 @@ impl GeoAlerts {
         limiter: Option<&RateLimiter<i64>>,
         agent_id: i64,
         event: &AuthEvent,
+        located: Option<&(IpAddr, Location)>,
     ) -> Result<(), sqlx::Error> {
         if event.service != "sshd"
             || !matches!(
@@ -88,7 +99,8 @@ impl GeoAlerts {
         {
             return Ok(());
         }
-        let Some(ip) = client_ip(event) else {
+        // Not a public IP, or no database.
+        let Some((ip, location)) = located else {
             return Ok(());
         };
         let settings = load_settings(pool).await?;
@@ -97,9 +109,6 @@ impl GeoAlerts {
         {
             return Ok(());
         }
-        let Some(location) = self.geoip.lookup(ip) else {
-            return Ok(()); // no database
-        };
         if location
             .country_code
             .as_ref()
@@ -131,7 +140,7 @@ impl GeoAlerts {
             hostname.as_deref().unwrap_or("unknown host"),
             event,
             &ip_str,
-            &location,
+            location,
         );
 
         let mut tx = pool.begin().await?;
@@ -191,8 +200,8 @@ impl GeoAlerts {
 }
 
 /// The client's IP from `rhost`, if it's a public one.
-fn client_ip(event: &AuthEvent) -> Option<IpAddr> {
-    let ip: IpAddr = event.rhost.as_deref()?.trim().parse().ok()?;
+fn client_ip(rhost: &str) -> Option<IpAddr> {
+    let ip: IpAddr = rhost.trim().parse().ok()?;
     let ip = ip.to_canonical();
     geoip::is_public(ip).then_some(ip)
 }
@@ -270,18 +279,16 @@ mod tests {
 
     #[test]
     fn only_public_ips_are_checked() {
-        let ip = |rhost| client_ip(&event(AuthEventKind::SessionOpen, "root", rhost));
         assert_eq!(
-            ip(Some("81.2.69.142")),
+            client_ip("81.2.69.142"),
             Some("81.2.69.142".parse().unwrap())
         );
         assert_eq!(
-            ip(Some("::ffff:81.2.69.142")),
+            client_ip("::ffff:81.2.69.142"),
             Some("81.2.69.142".parse().unwrap())
         );
-        assert_eq!(ip(Some("192.168.1.5")), None);
-        assert_eq!(ip(Some("host.example.com")), None); // UseDNS yes
-        assert_eq!(ip(None), None);
+        assert_eq!(client_ip("192.168.1.5"), None);
+        assert_eq!(client_ip("host.example.com"), None); // UseDNS yes
     }
 
     #[test]
