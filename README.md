@@ -299,14 +299,18 @@ request again, with a secret, next time pairing is open.
 
 ### Rate limiting
 
-The routes anyone can reach are rate-limited, configurable under
-`[web.rate_limit]` in the server config:
+The routes anyone can reach are rate-limited, and so are the ones approved
+agents send data to, so one agent (or a stolen agent secret) can't flood
+the database. All limits are configurable under `[web.rate_limit]` in the
+server config:
 
 | Route | Default | Per | Counts |
 |---|---|---|---|
 | `POST /auth/login` | 5 per minute | client IP (IPv6: per /64) | failed logins only |
 | `POST /auth/login` | 5 per minute | username, from any IP | failed logins only |
 | `POST /agents/pair` | 30 per minute | client IP (IPv6: per /64) | every request |
+| `POST /agents/me/metrics` | 4 per minute | agent | every request |
+| `POST /agents/me/auth-events` | 300 per minute | agent | every request |
 
 Over the limit, the server answers `429` with `Retry-After` (the agent waits
 that long; `pulse-server-cli` says how long). Five wrong passwords lock
@@ -314,7 +318,17 @@ that address out briefly, even for the right password, so guesses can't
 continue. The per-username limit catches guessing spread over many
 addresses. It only slows logins down, so nobody can lock you out of your
 account for good. Unknown usernames are limited the same way, so a `429`
-doesn't reveal whether an account exists. The pairing limit also caps how many agents can share one public
+doesn't reveal whether an account exists.
+
+The metrics limit allows an agent `interval_secs` down to 15; for shorter
+intervals, raise `metrics_per_agent_per_minute`. An agent over a limit logs
+`server rejected ...; dropped` with status `429`, and the server logs
+`rate limited` with the agent's ID.
+
+Request bodies are capped at 64 KiB. A metrics snapshot may list at most
+256 disks and 1024 cores, far more than real hosts report. PAM event fields
+longer than 256 bytes (e.g. an absurd username in a failed SSH login) are
+stored cut short with a trailing `…`, not dropped. The pairing limit also caps how many agents can share one public
 IP (e.g. behind NAT); raise it if you have more. Behind a reverse proxy,
 every client shares the proxy's IP: set the limits to `0` and rate-limit at
 the proxy. Password checks are also limited to a few at a time (each takes

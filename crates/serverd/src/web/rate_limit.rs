@@ -1,7 +1,9 @@
 //! Rate limiting for the routes an unauthenticated client can reach
 //! (`/auth/login`, `/agents/pair`): per client IP via [`enforce`], and for
 //! logins also per username (see `users::login`), since per-IP limits alone
-//! don't stop a guesser with many addresses.
+//! don't stop a guesser with many addresses. The agents' own routes are
+//! limited per agent ([`enforce_per_agent`]), so one agent (or a stolen
+//! agent secret) can't flood the database.
 //!
 //! A token bucket per client: it holds up to `per_minute` requests and
 //! refills at `per_minute` per minute, so a client can burst up to the full
@@ -25,6 +27,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::Extension;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
@@ -50,6 +53,13 @@ pub struct RateLimitConfig {
     /// polls once a minute, even after approval, so this also caps how many
     /// agents can share one public IP (e.g. behind NAT).
     pub pair_per_minute: u32,
+    /// `POST /agents/me/metrics` per agent per minute. Agents send one
+    /// snapshot per `interval_secs` (default 60), so 4 allows intervals
+    /// down to 15s.
+    pub metrics_per_agent_per_minute: u32,
+    /// `POST /agents/me/auth-events` per agent per minute: one per PAM
+    /// event, so generous enough for a host under SSH brute force.
+    pub auth_events_per_agent_per_minute: u32,
 }
 
 impl Default for RateLimitConfig {
@@ -58,6 +68,8 @@ impl Default for RateLimitConfig {
             login_failures_per_minute: 5,
             login_failures_per_user_per_minute: 5,
             pair_per_minute: 30,
+            metrics_per_agent_per_minute: 4,
+            auth_events_per_agent_per_minute: 300,
         }
     }
 }
@@ -187,6 +199,24 @@ pub async fn enforce(
         }
         Err(retry_after) => {
             tracing::warn!(limiter = limiter.name, peer = %peer.ip(), "rate limited");
+            too_many_requests(retry_after)
+        }
+    }
+}
+
+/// Middleware for routes behind [`super::auth::require_agent`] (which must
+/// run first): `429` with `Retry-After` once the calling agent's bucket is
+/// empty. Counts every request.
+pub async fn enforce_per_agent(
+    State(limiter): State<Arc<RateLimiter<i64>>>,
+    Extension(agent): Extension<super::auth::AuthedAgent>,
+    req: Request,
+    next: Next,
+) -> Response {
+    match limiter.check(agent.id, Instant::now()) {
+        Ok(()) => next.run(req).await,
+        Err(retry_after) => {
+            tracing::warn!(limiter = limiter.name, agent_id = agent.id, "rate limited");
             too_many_requests(retry_after)
         }
     }

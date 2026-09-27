@@ -33,6 +33,12 @@ login_failures_per_user_per_minute = 5
 # Agent pairing polls. Every agent polls once a minute, even after approval,
 # so this also caps how many agents can share one public IP (e.g. NAT).
 pair_per_minute = 30
+# Per agent, for the routes approved agents send data to, so one agent (or
+# a stolen agent secret) can't flood the database. Metrics: agents send one
+# snapshot per interval_secs (default 60), so 4 allows intervals down to 15s.
+metrics_per_agent_per_minute = 4
+# PAM events (logins, failed auth); generous for a host under SSH brute force.
+auth_events_per_agent_per_minute = 300
 
 [web.connections]
 # Caps on open connections; a client over a cap is disconnected right away.

@@ -14,6 +14,14 @@ use super::auth::AuthedAgent;
 const DEFAULT_LIST_LIMIT: i64 = 20;
 const MAX_LIST_LIMIT: i64 = 1000;
 
+/// Upper bounds on a snapshot, far above any real host (agents report
+/// real filesystems only, not every mount), so a misbehaving or
+/// compromised agent can't store arbitrary amounts of data per row.
+const MAX_DISKS: usize = 256;
+const MAX_CORES: usize = 1024;
+/// Longest disk name / mount point / file system name.
+const MAX_DISK_FIELD_LEN: usize = 1024;
+
 /// SQLite integers are signed 64-bit; byte counts never get near the limit,
 /// but saturate rather than wrap just in case.
 fn to_i64(v: u64) -> i64 {
@@ -27,6 +35,11 @@ pub async fn ingest(
     Extension(agent): Extension<AuthedAgent>,
     Json(m): Json<Metrics>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Err(err) = validate(&m) {
+        tracing::warn!(agent_id = agent.id, %err, "rejected metrics");
+        return Err((StatusCode::BAD_REQUEST, err));
+    }
+
     let per_core = m
         .cpu
         .as_ref()
@@ -67,6 +80,28 @@ pub async fn ingest(
     tracing::debug!(agent_id = agent.id, "stored metrics");
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn validate(m: &Metrics) -> Result<(), String> {
+    if m.disks.len() > MAX_DISKS {
+        return Err(format!("at most {MAX_DISKS} disks"));
+    }
+    if let Some(cpu) = &m.cpu
+        && (cpu.per_core_usage_percent.len() > MAX_CORES || cpu.core_count > MAX_CORES)
+    {
+        return Err(format!("at most {MAX_CORES} cores"));
+    }
+    let too_long = m.disks.iter().any(|d| {
+        [&d.name, &d.mount_point, &d.file_system]
+            .iter()
+            .any(|s| s.len() > MAX_DISK_FIELD_LEN)
+    });
+    if too_long {
+        return Err(format!(
+            "disk name, mount point and file system must be at most {MAX_DISK_FIELD_LEN} bytes"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]

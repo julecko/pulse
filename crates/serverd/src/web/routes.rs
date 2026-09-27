@@ -9,6 +9,7 @@
 //! - `user`: require a logged-in user's session token (see
 //!   [`auth::require_user`]); everything `pulse-server-cli` manages
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{MethodRouter, delete, get, post};
 use axum::{Extension, Router};
@@ -16,6 +17,11 @@ use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
 use super::{agents, auth, auth_events, metrics, users};
+
+/// Largest request body accepted on any route (axum's default is 2 MiB).
+/// A metrics snapshot is ~1 KiB for a typical host and ~30 KiB for one with
+/// hundreds of cores and disks; everything else is far smaller.
+const MAX_BODY_BYTES: usize = 64 * 1024;
 
 pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig) -> Router {
     let public = Router::new()
@@ -41,8 +47,20 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
 
     let agent = Router::new()
         .route("/agents/me", get(agents::me))
-        .route("/agents/me/auth-events", post(auth_events::ingest))
-        .route("/agents/me/metrics", post(metrics::ingest))
+        .route(
+            "/agents/me/auth-events",
+            per_agent(
+                post(auth_events::ingest),
+                RateLimiter::new("auth_events", limits.auth_events_per_agent_per_minute),
+            ),
+        )
+        .route(
+            "/agents/me/metrics",
+            per_agent(
+                post(metrics::ingest),
+                RateLimiter::new("metrics", limits.metrics_per_agent_per_minute),
+            ),
+        )
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_agent,
@@ -71,6 +89,7 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
         .merge(public)
         .merge(agent)
         .merge(user)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(pool)
 }
 
@@ -81,6 +100,22 @@ fn rate_limited(
 ) -> MethodRouter<SqlitePool> {
     match limiter {
         Some(limiter) => route.layer(middleware::from_fn_with_state(limiter, rate_limit::enforce)),
+        None => route,
+    }
+}
+
+/// `route` limited per calling agent (see [`rate_limit::enforce_per_agent`]),
+/// or unchanged if that limit is disabled. The agent routes' `route_layer`
+/// runs [`auth::require_agent`] before this.
+fn per_agent(
+    route: MethodRouter<SqlitePool>,
+    limiter: Option<std::sync::Arc<RateLimiter<i64>>>,
+) -> MethodRouter<SqlitePool> {
+    match limiter {
+        Some(limiter) => route.layer(middleware::from_fn_with_state(
+            limiter,
+            rate_limit::enforce_per_agent,
+        )),
         None => route,
     }
 }
