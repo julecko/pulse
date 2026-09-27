@@ -30,6 +30,11 @@ pub struct AuthedUser {
     pub session_id: i64,
 }
 
+/// `401` with an empty body.
+fn unauthorized() -> (StatusCode, String) {
+    (StatusCode::UNAUTHORIZED, String::new())
+}
+
 fn bearer_token(req: &Request) -> Option<&str> {
     req.headers()
         .get(header::AUTHORIZATION)
@@ -44,17 +49,17 @@ pub async fn require_agent(
     State(pool): State<SqlitePool>,
     mut req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
-    let token = bearer_token(&req).ok_or(StatusCode::UNAUTHORIZED)?;
+) -> Result<Response, (StatusCode, String)> {
+    let token = bearer_token(&req).ok_or_else(unauthorized)?;
 
     let id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM agents WHERE secret_hash = ? AND status = 'approved'")
             .bind(credentials::hash_token(token))
             .fetch_optional(&pool)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(super::internal_error)?;
 
-    let id = id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let id = id.ok_or_else(unauthorized)?;
     req.extensions_mut().insert(AuthedAgent { id });
 
     Ok(next.run(req).await)
@@ -67,8 +72,8 @@ pub async fn require_user(
     State(pool): State<SqlitePool>,
     mut req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
-    let token = bearer_token(&req).ok_or(StatusCode::UNAUTHORIZED)?;
+) -> Result<Response, (StatusCode, String)> {
+    let token = bearer_token(&req).ok_or_else(unauthorized)?;
     let token_hash = credentials::hash_token(token);
 
     let row: Option<(i64, i64, String)> = sqlx::query_as(
@@ -78,9 +83,9 @@ pub async fn require_user(
     .bind(&token_hash)
     .fetch_optional(&pool)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(super::internal_error)?;
 
-    let (session_id, id, username) = row.ok_or(StatusCode::UNAUTHORIZED)?;
+    let (session_id, id, username) = row.ok_or_else(unauthorized)?;
     req.extensions_mut().insert(AuthedUser {
         id,
         username,

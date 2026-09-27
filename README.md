@@ -507,7 +507,13 @@ cleaned up hourly.
 cargo check --all-targets   # fast type-check
 cargo fmt --all              # format
 cargo build --release        # optimized build
+cargo audit                  # known vulnerabilities in dependencies
 ```
+
+`cargo audit` needs `cargo install cargo-audit` once. Run it before each
+release: it checks `Cargo.lock` against the RustSec advisory database.
+Advisories that don't apply are listed, with the reason, in
+`.cargo/audit.toml`.
 
 Git hooks live in `.githooks/` (formatting + `cargo check` on commit). Point
 git at them once per clone:

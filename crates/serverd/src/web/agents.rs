@@ -61,7 +61,7 @@ pub async fn pair(
             .bind(&req.fingerprint)
             .fetch_optional(&pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(super::internal_error)?;
 
     let status = match existing {
         Some(row) => {
@@ -108,7 +108,7 @@ pub async fn pair(
                 sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE status = 'pending'")
                     .fetch_one(&pool)
                     .await
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                    .map_err(super::internal_error)?;
             if pending >= MAX_PENDING_AGENTS {
                 tracing::warn!(peer = %peer.ip(), pending, "rejected pairing request: too many pending");
                 return Err((
@@ -203,7 +203,7 @@ fn db_error(e: sqlx::Error) -> (StatusCode, String) {
             StatusCode::CONFLICT,
             "this agent is already registered".to_string(),
         ),
-        e => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        e => super::internal_error(e),
     }
 }
 
@@ -215,7 +215,7 @@ async fn pairing_open(pool: &SqlitePool) -> Result<bool, (StatusCode, String)> {
     .fetch_optional(pool)
     .await
     .map(|open| open.unwrap_or(false))
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+    .map_err(super::internal_error)
 }
 
 async fn pairing_status(pool: &SqlitePool) -> Result<PairingStatus, (StatusCode, String)> {
@@ -227,7 +227,7 @@ async fn pairing_status(pool: &SqlitePool) -> Result<PairingStatus, (StatusCode,
         )
         .fetch_one(pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     Ok(PairingStatus {
         open,
@@ -275,7 +275,7 @@ pub async fn set_pairing(
     .bind(&user.username)
     .execute(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     let status = pairing_status(&pool).await?;
     tracing::info!(
@@ -318,7 +318,7 @@ pub async fn list(
     )
     .fetch_all(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
@@ -337,7 +337,7 @@ pub async fn approve(
         .bind(id)
         .fetch_optional(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     match status.as_deref() {
         None => return Err((StatusCode::NOT_FOUND, "agent not found".to_string())),
@@ -359,7 +359,7 @@ pub async fn approve(
         .bind(id)
         .execute(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     tracing::info!(agent_id = id, by = %user.username, "agent approved");
 
@@ -377,7 +377,7 @@ pub async fn revoke(
         .bind(id)
         .execute(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
@@ -403,14 +403,14 @@ pub async fn unrevoke(
             .bind(id)
             .execute(&pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(super::internal_error)?;
 
     if result.rows_affected() == 0 {
         let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM agents WHERE id = ?")
             .bind(id)
             .fetch_optional(&pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(super::internal_error)?;
         return Err(match exists {
             None => (StatusCode::NOT_FOUND, "agent not found".to_string()),
             Some(_) => (
@@ -438,7 +438,7 @@ pub async fn remove(
         .bind(id)
         .execute(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "agent not found".to_string()));
@@ -461,7 +461,7 @@ pub async fn me(
     .bind(agent.id)
     .fetch_one(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     Ok(Json(row.into()))
 }

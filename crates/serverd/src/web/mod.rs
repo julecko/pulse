@@ -94,6 +94,20 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
         .map_err(|e| WebError::Serve(cfg.bind, e))
 }
 
+/// For unexpected failures (database errors, ...): logs `err` and returns a
+/// `500`. Release builds send only a generic message, so internals like SQL
+/// or file paths never reach a client; debug builds send `err` itself, to
+/// make development easier.
+pub(super) fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
+    tracing::error!(%err, "internal error");
+    let body = if cfg!(debug_assertions) {
+        format!("internal server error: {err}")
+    } else {
+        "internal server error".to_string()
+    };
+    (StatusCode::INTERNAL_SERVER_ERROR, body)
+}
+
 /// `tls` advertising only `http/1.1` in ALPN, so clients that would pick
 /// HTTP/2 (e.g. curl) fall back to HTTP/1.1 instead of failing.
 fn http1_only_alpn(tls: &RustlsConfig) -> RustlsConfig {

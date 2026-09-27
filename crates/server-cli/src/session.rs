@@ -3,6 +3,7 @@
 //! so no session outlives the command.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use protocol::{LoginRequest, LoginResponse};
 use pulse_shared::tls::TlsConfig;
@@ -62,9 +63,19 @@ pub fn ca_cert(explicit: Option<PathBuf>) -> Result<Option<ServerCert>, String> 
         .map_err(|e| format!("parsing CA cert {}: {e}", path.display()))
 }
 
+/// Longest a whole request may take, so an unresponsive server makes a
+/// command fail instead of hang. Longer than the server's own 30s request
+/// timeout, so its `408` arrives first when there is a server to send one.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest a connect (TCP and TLS) may take; the OS default can be minutes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Always verifies the server's cert, against `ca_cert` (see [`ca_cert`]).
 pub fn http_client(ca_cert: Option<&ServerCert>, default_headers: HeaderMap) -> reqwest::Client {
-    let mut builder = reqwest::Client::builder().default_headers(default_headers);
+    let mut builder = reqwest::Client::builder()
+        .default_headers(default_headers)
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT);
     if let Some(ca) = ca_cert {
         builder = builder
             .tls_built_in_root_certs(!ca.pinned)

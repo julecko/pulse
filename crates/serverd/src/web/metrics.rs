@@ -45,9 +45,8 @@ pub async fn ingest(
         .as_ref()
         .map(|c| serde_json::to_string(&c.per_core_usage_percent))
         .transpose()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let disks = serde_json::to_string(&m.disks)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
+    let disks = serde_json::to_string(&m.disks).map_err(super::internal_error)?;
 
     sqlx::query(
         "INSERT INTO metrics (
@@ -75,7 +74,7 @@ pub async fn ingest(
     .bind(m.linux.as_ref().map(|l| to_i64(l.uptime_secs)))
     .execute(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     tracing::debug!(agent_id = agent.id, "stored metrics");
 
@@ -194,7 +193,7 @@ pub async fn list(
     .bind(limit)
     .fetch_all(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }

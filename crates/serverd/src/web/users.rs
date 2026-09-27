@@ -94,7 +94,7 @@ async fn verify_and_create_session(
             .bind(&req.username)
             .fetch_optional(pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(super::internal_error)?;
 
     // Always run a full verify, even for unknown users, so response time
     // doesn't reveal which usernames exist.
@@ -106,11 +106,11 @@ async fn verify_and_create_session(
     let permit = PASSWORD_CHECKS
         .acquire()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
     // argon2 is deliberately slow; keep it off the async worker threads.
     let valid = tokio::task::spawn_blocking(move || credentials::verify_password(&password, &hash))
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
     drop(permit);
 
     let Some(user_id) = user_id.filter(|_| valid) else {
@@ -128,7 +128,7 @@ async fn verify_and_create_session(
     .bind(format!("+{ttl_hours} hours"))
     .fetch_one(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     tracing::info!(username = %req.username, "user logged in");
 
@@ -145,7 +145,7 @@ pub async fn logout(
         .bind(user.session_id)
         .execute(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -159,7 +159,7 @@ pub async fn me(
         .bind(user.id)
         .fetch_one(&pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(super::internal_error)?;
 
     Ok(Json(UserInfo {
         id: user.id,

@@ -29,11 +29,18 @@ pub enum ConfigError {
     Parse(PathBuf, toml::de::Error),
 }
 
-/// Config path for `app`, absent an explicit `PULSE_CONFIG` override.
+/// Config path for `app`: `PULSE_CONFIG` if set, else [`installed_path`].
 pub fn default_path(app: &str) -> PathBuf {
     if let Ok(path) = std::env::var("PULSE_CONFIG") {
         return PathBuf::from(path);
     }
+    installed_path(app)
+}
+
+/// Config path for `app`, ignoring `PULSE_CONFIG`: for code running with
+/// privileges on behalf of someone else (e.g. the agent's PAM hook, run as
+/// root by `pam_exec`), whose environment shouldn't choose the config.
+pub fn installed_path(app: &str) -> PathBuf {
     if cfg!(debug_assertions) {
         Path::new("config").join(format!("{app}.toml"))
     } else {

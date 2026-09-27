@@ -1,0 +1,11 @@
+# Config for `cargo audit` (cargo install cargo-audit).
+
+[advisories]
+ignore = [
+    # rsa: Marvin timing attack, no fixed release. Only sqlx-mysql depends
+    # on it, which is in Cargo.lock because lockfiles list optional
+    # dependencies, but it isn't built: sqlx is used with the `sqlite`
+    # feature only (check with `cargo tree -i rsa`, which prints nothing).
+    # Revisit if a MySQL feature is ever enabled.
+    "RUSTSEC-2023-0071",
+]

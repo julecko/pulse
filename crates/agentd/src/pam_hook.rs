@@ -42,7 +42,16 @@ fn report() -> Option<()> {
         occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64,
     };
 
-    let cfg: AgentConfig = pulse_shared::config::load("agent").ok()?;
+    // Runs as root for every login, in an environment partly shaped by PAM
+    // modules (e.g. pam_env), so a release build reads only the installed
+    // config and ignores PULSE_CONFIG. Debug builds still honour it, for
+    // testing with a local config.
+    let path = if cfg!(debug_assertions) {
+        pulse_shared::config::default_path("agent")
+    } else {
+        pulse_shared::config::installed_path("agent")
+    };
+    let cfg: AgentConfig = pulse_shared::config::load_from(&path).ok()?;
 
     let mut line = serde_json::to_vec(&event).ok()?;
     line.push(b'\n');

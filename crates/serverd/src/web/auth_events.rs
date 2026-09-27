@@ -52,7 +52,7 @@ pub async fn ingest(
     .bind(event.occurred_at)
     .execute(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     tracing::debug!(
         agent_id = agent.id,
@@ -103,7 +103,7 @@ pub async fn list(
     .bind(LIST_LIMIT)
     .fetch_all(&pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(super::internal_error)?;
 
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
