@@ -29,11 +29,6 @@ pub struct UserLoginLimiter(pub Option<Arc<RateLimiter<String>>>);
 
 const INVALID_CREDENTIALS: &str = "invalid username or password";
 
-/// Longest username `pulse-server-cli users add` accepts; longer ones can't
-/// exist, so they're rejected before touching the database or the per-user
-/// limiter (which would otherwise keep a bucket per junk name).
-const MAX_USERNAME_LEN: usize = 64;
-
 /// Password checks allowed at once. Each argon2 verify holds ~19 MiB for
 /// its duration, so without a cap a flood of logins (even rate-limited per
 /// IP, from many IPs) could exhaust memory; excess logins wait their turn.
@@ -48,8 +43,20 @@ pub async fn login(
     Extension(UserLoginLimiter(user_limiter)): Extension<UserLoginLimiter>,
     Json(req): Json<LoginRequest>,
 ) -> Response {
-    if req.username.len() > MAX_USERNAME_LEN {
-        tracing::warn!("failed login: username too long");
+    // A username `pulse-server-cli users add` wouldn't accept can't exist,
+    // so reject it before touching the database or the per-user limiter
+    // (which would otherwise keep a bucket per junk name). This also means
+    // every username logged below is plain `a-z A-Z 0-9 _ - .`: nothing a
+    // client sends can forge log lines.
+    if !protocol::is_valid_username(&req.username) {
+        // Debug-formatted, so newlines and control characters are escaped;
+        // cut short so a huge name can't flood the log.
+        let shown: String = req
+            .username
+            .chars()
+            .take(protocol::MAX_USERNAME_LEN)
+            .collect();
+        tracing::warn!(username = ?shown, "failed login: invalid username");
         return (StatusCode::UNAUTHORIZED, INVALID_CREDENTIALS).into_response();
     }
 

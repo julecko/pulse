@@ -18,7 +18,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use crate::prompt;
 
 const MIN_PASSWORD_LEN: usize = 8;
-const MAX_USERNAME_LEN: usize = 64;
 
 /// Just the `[db]` section of the server config; everything else in the
 /// file is ignored.
@@ -150,16 +149,12 @@ pub async fn list(pool: &SqlitePool) -> Result<(), String> {
 }
 
 fn validate_username(username: &str) -> Result<(), String> {
-    let valid = !username.is_empty()
-        && username.len() <= MAX_USERNAME_LEN
-        && username
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if valid {
+    if protocol::is_valid_username(username) {
         Ok(())
     } else {
         Err(format!(
-            "username must be 1-{MAX_USERNAME_LEN} characters of a-z, A-Z, 0-9, '_', '-', '.'"
+            "username must be 1-{} characters of a-z, A-Z, 0-9, '_', '-', '.'",
+            protocol::MAX_USERNAME_LEN
         ))
     }
 }

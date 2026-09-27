@@ -22,3 +22,34 @@ pub struct UserInfo {
     pub username: String,
     pub created_at: String,
 }
+
+/// Longest username.
+pub const MAX_USERNAME_LEN: usize = 64;
+
+/// Whether `username` is one `pulse-server-cli users add` accepts: 1 to
+/// [`MAX_USERNAME_LEN`] characters of `a-z A-Z 0-9 _ - .`. The server
+/// refuses logins for anything else up front, so no other username ever
+/// reaches its logs (where e.g. a newline could forge log lines).
+pub fn is_valid_username(username: &str) -> bool {
+    !username.is_empty()
+        && username.len() <= MAX_USERNAME_LEN
+        && username
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_usernames() {
+        assert!(is_valid_username("alice"));
+        assert!(is_valid_username("ops-team_1.bak"));
+        assert!(!is_valid_username(""));
+        assert!(!is_valid_username("a\nINFO fake line"));
+        assert!(!is_valid_username("alice bob"));
+        assert!(!is_valid_username("žofia"));
+        assert!(!is_valid_username(&"a".repeat(MAX_USERNAME_LEN + 1)));
+    }
+}

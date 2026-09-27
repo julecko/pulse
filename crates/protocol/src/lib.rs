@@ -11,4 +11,4 @@ pub use pairing::{
     agent_fingerprint, is_valid_agent_secret,
 };
 pub use text::{escape_for_display, is_unsafe_display_char};
-pub use user::{LoginRequest, LoginResponse, UserInfo};
+pub use user::{LoginRequest, LoginResponse, MAX_USERNAME_LEN, UserInfo, is_valid_username};
