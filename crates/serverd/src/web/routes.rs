@@ -53,6 +53,7 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
         )
         .route("/agents/{id}/approve", post(agents::approve))
         .route("/agents/{id}/revoke", post(agents::revoke))
+        .route("/agents/{id}/unrevoke", post(agents::unrevoke))
         .route("/agents/{id}", delete(agents::remove))
         .route("/agents/{id}/auth-events", get(auth_events::list))
         .route("/agents/{id}/metrics", get(metrics::list))

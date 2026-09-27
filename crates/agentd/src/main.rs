@@ -130,10 +130,12 @@ async fn main() {
     let _ = tokio::join!(auth_events, metrics, pairing);
 }
 
-/// HTTPS client that always verifies the server's cert: against the
-/// built-in public CA roots, plus `ca_cert` if set (for a self-signed
-/// server cert). Without verification, anyone on the network path could
-/// impersonate the server and collect the fingerprint and token.
+/// HTTPS client that always verifies the server's cert: against `ca_cert`
+/// alone if set (pinned, e.g. a self-signed server cert), else against the
+/// built-in public CA roots. Without verification, anyone on the network
+/// path could impersonate the server and collect the fingerprint and token.
+/// Pinning keeps a cert any public CA issued for `server_addr` (say, after
+/// a DNS hijack) from being accepted too.
 fn http_client(cfg: &AgentConfig) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder();
     if let Some(path) = &cfg.ca_cert {
@@ -141,7 +143,9 @@ fn http_client(cfg: &AgentConfig) -> Result<reqwest::Client, String> {
             std::fs::read(path).map_err(|e| format!("reading ca_cert {}: {e}", path.display()))?;
         let cert = reqwest::Certificate::from_pem(&pem)
             .map_err(|e| format!("parsing ca_cert {}: {e}", path.display()))?;
-        builder = builder.add_root_certificate(cert);
+        builder = builder
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(cert);
     }
     builder
         .build()

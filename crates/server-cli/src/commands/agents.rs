@@ -61,6 +61,23 @@ pub async fn revoke(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
     Ok(())
 }
 
+pub async fn unrevoke(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
+    let resp = client
+        .post(format!("{base}/agents/{id}/unrevoke"))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("server error ({status}): {body}"));
+    }
+
+    println!("unrevoked agent {id}; it resumes on its next pairing poll (within a minute)");
+    Ok(())
+}
+
 pub async fn remove(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
     client
         .delete(format!("{base}/agents/{id}"))

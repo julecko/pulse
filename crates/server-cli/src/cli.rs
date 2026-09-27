@@ -9,10 +9,11 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "127.0.0.1:8443")]
     pub server: String,
 
-    /// Extra certificate (PEM) to trust for the server, on top of the
-    /// built-in public CA roots. Default: the server's own cert
-    /// (`[web.tls] cert` from the server config, else
-    /// /etc/pulse-server/certs/cert.pem), when it's readable.
+    /// Certificate (PEM) to pin for the server: the only one trusted,
+    /// replacing the built-in public CA roots. Default: the server's own
+    /// cert (`[web.tls] cert` from the server config, else
+    /// /etc/pulse-server/certs/cert.pem) when it's readable, trusted on top
+    /// of the built-in roots.
     #[arg(long, global = true)]
     pub ca_cert: Option<PathBuf>,
 
@@ -62,6 +63,10 @@ pub enum AgentsCommand {
     Approve { id: i64 },
     /// Revoke an agent's access
     Revoke { id: i64 },
+    /// Restore a revoked agent's access with its existing secret. Only if
+    /// you're sure the secret never leaked: anyone with a copy gets access
+    /// back too. Otherwise `remove` it and reset its identity instead.
+    Unrevoke { id: i64 },
     /// Delete an agent entirely, so it can pair again as a fresh request
     Remove { id: i64 },
     /// Show an agent's most recent PAM events (logins, sudo, failed auth)

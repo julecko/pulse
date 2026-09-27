@@ -272,14 +272,25 @@ derives its public **fingerprint** from it; both are stored in
 - Compare fingerprints before approving: `agents list` on the server,
   `sudo /usr/lib/pulse-agent/pulse-agentd fingerprint` on the host.
 
-Revoking an agent is final for its secret (it may be compromised), so a
-revoked agent can't be approved again. To bring the host back:
+A revoked agent can't be approved again, since its secret may be
+compromised. The safe way to bring the host back is a new secret:
 
 ```sh
 pulse-server-cli -u alice agents remove <id>             # on the server
 sudo /usr/lib/pulse-agent/pulse-agentd reset-identity   # on the host: new secret
 sudo systemctl restart pulse-agentd                     # pairs as a new request
 ```
+
+If you revoked it by mistake and are sure its secret never leaked, you can
+restore access with the old secret instead, keeping its history:
+
+```sh
+pulse-server-cli -u alice agents unrevoke <id>   # agent resumes within a minute
+```
+
+Don't use this after a suspected compromise: anyone with a copy of the
+secret gets access back too, with the same fingerprint, so you can't tell
+them apart. Unrevoking is logged as a warning on the server.
 
 Upgrading from a version where the server handed out tokens: approved
 agents keep working (the server converts their stored token, and the agent
@@ -312,13 +323,18 @@ is no option to skip it. Without it, anyone on the network path could pose
 as the server and collect agent secrets or your login password, or tell
 agents they've been revoked.
 
-A cert is accepted if it chains to a public CA (e.g. Let's Encrypt), or to
-the extra cert you give the client:
+Give the client the server's cert to **pin** it: then that's the only cert
+trusted, and the public CA roots are ignored, so a cert some public CA
+issued for the same name (e.g. after a DNS hijack) is rejected too:
 
 - agent: `ca_cert = "/etc/pulse-agent/server.pem"` in `agent.toml`
-- `pulse-server-cli`: `--ca-cert <file>`. Without it, it trusts the server's
-  own cert (`[web.tls] cert`, default `/etc/pulse-server/certs/cert.pem`)
-  when it can read it, so on the server host it just works.
+- `pulse-server-cli`: `--ca-cert <file>`
+
+For a server with a CA-issued cert, pin that CA's cert instead, or leave
+these unset to accept any cert that chains to a public CA (e.g. Let's
+Encrypt). Without `--ca-cert`, `pulse-server-cli` trusts the server's own
+cert (`[web.tls] cert`, default `/etc/pulse-server/certs/cert.pem`) on top
+of the public CAs when it can read it, so on the server host it just works.
 
 Either way, the cert must be valid for the host you connect to (the host in
 the agent's `server_addr`, or the CLI's `--server`). The self-signed cert

@@ -316,8 +316,9 @@ pub async fn list(
 
 /// Approves a pending agent: from then on its own secret is accepted as
 /// its bearer token. Nothing is issued or returned. Revoked agents can't be
-/// approved again, since their secret may be compromised: remove them and
-/// have the host pair again with a new identity.
+/// approved, since their secret may be compromised: remove them and have
+/// the host pair again with a new identity, or, if you're sure the secret
+/// is safe, [`unrevoke`] them.
 pub async fn approve(
     State(pool): State<SqlitePool>,
     Extension(user): Extension<AuthedUser>,
@@ -335,9 +336,10 @@ pub async fn approve(
             return Err((
                 StatusCode::CONFLICT,
                 format!(
-                    "agent {id} is revoked and can't be approved again (its secret may be compromised): \
+                    "agent {id} is revoked and can't be approved (its secret may be compromised): \
                      remove it with `agents remove {id}`, run `pulse-agentd reset-identity` on its host, \
-                     then approve the new pairing request"
+                     then approve the new pairing request; or, if you're sure its secret never leaked, \
+                     `agents unrevoke {id}`"
                 ),
             ));
         }
@@ -373,6 +375,43 @@ pub async fn revoke(
     }
 
     tracing::info!(agent_id = id, by = %user.username, "agent revoked");
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Undoes [`revoke`]: the agent's existing secret is accepted again, and the
+/// agent resumes on its next pairing poll. Only safe if the secret never
+/// leaked: anyone holding a copy gets access back too, and shows the same
+/// fingerprint, so there's no way to tell them apart. Refuses agents that
+/// aren't revoked, so it can't be used to skip approving a pending one.
+pub async fn unrevoke(
+    State(pool): State<SqlitePool>,
+    Extension(user): Extension<AuthedUser>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let result =
+        sqlx::query("UPDATE agents SET status = 'approved' WHERE id = ? AND status = 'revoked'")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM agents WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        return Err(match exists {
+            None => (StatusCode::NOT_FOUND, "agent not found".to_string()),
+            Some(_) => (
+                StatusCode::CONFLICT,
+                format!("agent {id} isn't revoked; use `agents approve {id}` for pending agents"),
+            ),
+        });
+    }
+
+    tracing::warn!(agent_id = id, by = %user.username, "agent unrevoked; its old secret is trusted again");
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -117,7 +117,8 @@ pub async fn pairing_loop(
                 ),
                 Status::Revoked => tracing::warn!(
                     "agent access revoked; to pair again: `agents remove <id>` on the server, \
-                     then `pulse-agentd reset-identity` here and restart"
+                     then `pulse-agentd reset-identity` here and restart (or, if this agent's \
+                     secret never leaked, `agents unrevoke <id>` on the server)"
                 ),
             }
             last_status = Some(status);

@@ -26,10 +26,20 @@ struct ServerConfigWeb {
     tls: TlsConfig,
 }
 
-/// The extra cert to trust for the server. `--ca-cert` must be readable;
-/// without it, the server's own cert is used if this user can read it
-/// (it usually can on the server host), else only the built-in roots.
-pub fn ca_cert(explicit: Option<PathBuf>) -> Result<Option<Certificate>, String> {
+/// The cert to trust for the server, from [`ca_cert`].
+pub struct ServerCert {
+    cert: Certificate,
+    /// Trust only `cert`, not the built-in public CA roots.
+    pinned: bool,
+}
+
+/// The cert to trust for the server. `--ca-cert` must be readable, and is
+/// pinned: it replaces the built-in roots. Without it, the server's own
+/// cert is trusted on top of the built-in roots if this user can read it
+/// (it usually can on the server host), else only the built-in roots. That
+/// one isn't pinned since it may be a CA-issued leaf, which can't verify
+/// on its own.
+pub fn ca_cert(explicit: Option<PathBuf>) -> Result<Option<ServerCert>, String> {
     let (path, required) = match explicit {
         Some(path) => (path, true),
         None => match pulse_shared::config::load::<ServerConfigTls>("server") {
@@ -43,16 +53,22 @@ pub fn ca_cert(explicit: Option<PathBuf>) -> Result<Option<Certificate>, String>
         Err(e) => return Err(format!("reading --ca-cert {}: {e}", path.display())),
     };
     Certificate::from_pem(&pem)
-        .map(Some)
+        .map(|cert| {
+            Some(ServerCert {
+                cert,
+                pinned: required,
+            })
+        })
         .map_err(|e| format!("parsing CA cert {}: {e}", path.display()))
 }
 
-/// Always verifies the server's cert: against the built-in public CA
-/// roots, plus `ca_cert` (see [`ca_cert`]).
-pub fn http_client(ca_cert: Option<&Certificate>, default_headers: HeaderMap) -> reqwest::Client {
+/// Always verifies the server's cert, against `ca_cert` (see [`ca_cert`]).
+pub fn http_client(ca_cert: Option<&ServerCert>, default_headers: HeaderMap) -> reqwest::Client {
     let mut builder = reqwest::Client::builder().default_headers(default_headers);
-    if let Some(cert) = ca_cert {
-        builder = builder.add_root_certificate(cert.clone());
+    if let Some(ca) = ca_cert {
+        builder = builder
+            .tls_built_in_root_certs(!ca.pinned)
+            .add_root_certificate(ca.cert.clone());
     }
     builder.build().expect("failed to build HTTP client")
 }
@@ -86,7 +102,7 @@ impl Session {
     /// password without echo.
     pub async fn login(
         base: &str,
-        ca_cert: Option<&Certificate>,
+        ca_cert: Option<&ServerCert>,
         username: Option<String>,
     ) -> Result<Self, String> {
         let username = match username {

@@ -57,7 +57,7 @@ async fn main() {
 
 async fn run_agents_session(
     base: &str,
-    ca_cert: Option<&reqwest::Certificate>,
+    ca_cert: Option<&session::ServerCert>,
     user: Option<String>,
     command: AgentsCommand,
 ) -> Result<(), String> {
@@ -83,6 +83,7 @@ async fn run_agents(
         },
         AgentsCommand::Approve { id } => commands::agents::approve(client, base, id).await,
         AgentsCommand::Revoke { id } => commands::agents::revoke(client, base, id).await,
+        AgentsCommand::Unrevoke { id } => commands::agents::unrevoke(client, base, id).await,
         AgentsCommand::Remove { id } => commands::agents::remove(client, base, id).await,
         AgentsCommand::Events { id } => commands::agents::events(client, base, id).await,
         AgentsCommand::Metrics { id, limit } => {
