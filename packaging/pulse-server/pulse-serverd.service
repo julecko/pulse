@@ -10,6 +10,9 @@ Group=pulse-server
 ExecStart=/usr/lib/pulse-server/pulse-serverd
 Restart=on-failure
 RestartSec=5
+# One file descriptor per connection: room for [web.connections] max
+# (default 4096) plus the database and logs. The default soft limit is 1024.
+LimitNOFILE=8192
 
 # /var/lib/pulse-server (SQLite database) and /var/log/pulse-server, owned by
 # pulse-server. Config and TLS certs are read from /etc/pulse-server.

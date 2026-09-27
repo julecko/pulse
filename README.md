@@ -320,6 +320,23 @@ every client shares the proxy's IP: set the limits to `0` and rate-limit at
 the proxy. Password checks are also limited to a few at a time (each takes
 ~19 MiB), so a flood of logins can't exhaust the server's memory.
 
+### Connections and timeouts
+
+So slow or idle clients can't tie up the server:
+
+- A client gets 10 s to send a request's headers, and a kept-alive
+  connection is closed after 10 s without a new request. The TLS handshake
+  also has 10 s.
+- A whole request (body and handler) gets 30 s, then `408`.
+- At most `[web.connections] max` connections are open at once (default
+  4096), and `max_per_ip` per client IP (default 64; IPv6: per /64). Extra
+  connections are closed right away and logged as `connection limit
+  reached`. Raise `max_per_ip` if more agents share one public IP; behind a
+  reverse proxy, raise or disable it.
+
+The server speaks HTTP/1.1 only (the agent and `pulse-server-cli` don't use
+HTTP/2); clients that offer HTTP/2, like `curl`, fall back automatically.
+
 ### Verifying the server's cert
 
 The agent and `pulse-server-cli` always verify the server's TLS cert; there

@@ -1,6 +1,7 @@
 mod agents;
 mod auth;
 mod auth_events;
+mod conn_limit;
 mod metrics;
 mod rate_limit;
 mod routes;
@@ -8,11 +9,17 @@ mod users;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
-use axum_server::tls_rustls::RustlsConfig;
+use axum::http::StatusCode;
+use axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
+use hyper_util::rt::{TokioExecutor, TokioTimer};
+use hyper_util::server::conn::auto::Builder;
 use pulse_shared::tls::TlsConfig;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use tower_http::timeout::TimeoutLayer;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -22,7 +29,17 @@ pub struct WebConfig {
     /// How long a user session from `POST /auth/login` stays valid.
     pub session_ttl_hours: u32,
     pub rate_limit: rate_limit::RateLimitConfig,
+    pub connections: conn_limit::ConnectionLimits,
 }
+
+/// Longest a client may take to send a request's headers (including the
+/// wait for the next request on a kept-alive connection); stops clients
+/// that trickle headers to hold connections open.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest a whole request may take once its headers are in, body and
+/// handler included (a login can wait for a free password check); `408`
+/// after that.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Default for WebConfig {
     fn default() -> Self {
@@ -31,6 +48,7 @@ impl Default for WebConfig {
             tls: TlsConfig::default(),
             session_ttl_hours: 24 * 7,
             rate_limit: rate_limit::RateLimitConfig::default(),
+            connections: conn_limit::ConnectionLimits::default(),
         }
     }
 }
@@ -51,13 +69,35 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
         .await
         .map_err(|e| WebError::Tls(cert.clone(), key.clone(), e))?;
 
+    let tls = http1_only_alpn(&tls);
+
     tracing::info!(bind = %cfg.bind, cert = %cert.display(), key = %key.display(), "web server listening");
 
-    axum_server::bind_rustls(cfg.bind, tls)
-        .serve(
-            routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit)
-                .into_make_service_with_connect_info::<SocketAddr>(),
-        )
+    let acceptor = RustlsAcceptor::new(tls)
+        .acceptor(conn_limit::ConnLimitAcceptor::new(cfg.connections.clone()));
+    let mut server = axum_server::bind(cfg.bind).acceptor(acceptor);
+    // HTTP/1.1 only: the agent and CLI don't speak HTTP/2, and hyper has no
+    // header read timeout for it. Without a timer hyper ignores the timeout.
+    let builder = server.http_builder();
+    *builder = std::mem::replace(builder, Builder::new(TokioExecutor::new())).http1_only();
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+
+    let router = routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit).layer(
+        TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT),
+    );
+    server
+        .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .map_err(|e| WebError::Serve(cfg.bind, e))
+}
+
+/// `tls` advertising only `http/1.1` in ALPN, so clients that would pick
+/// HTTP/2 (e.g. curl) fall back to HTTP/1.1 instead of failing.
+fn http1_only_alpn(tls: &RustlsConfig) -> RustlsConfig {
+    let mut config = (*tls.get_inner()).clone();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    RustlsConfig::from_config(Arc::new(config))
 }

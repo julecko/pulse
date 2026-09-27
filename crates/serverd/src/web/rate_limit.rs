@@ -159,7 +159,7 @@ impl<K: Hash + Eq> RateLimiter<K> {
 
 /// IPv4 addresses as-is, IPv6 grouped per /64 (IPv4-mapped IPv6 counts as
 /// the IPv4 address).
-fn client_key(ip: IpAddr) -> IpAddr {
+pub(super) fn client_key(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(v6) => {
             let prefix = u128::from(v6) & !((1u128 << 64) - 1);

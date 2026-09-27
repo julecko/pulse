@@ -1836,6 +1836,7 @@ version = "1.0.1"
 dependencies = [
  "axum",
  "axum-server",
+ "hyper-util",
  "password-hash",
  "protocol",
  "pulse-shared",
@@ -1846,6 +1847,7 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "tower-http",
  "tracing",
 ]
 
@@ -2475,6 +2477,7 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+ "tokio",
  "tower",
  "tower-layer",
  "tower-service",

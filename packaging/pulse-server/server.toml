@@ -34,6 +34,15 @@ login_failures_per_user_per_minute = 5
 # so this also caps how many agents can share one public IP (e.g. NAT).
 pair_per_minute = 30
 
+[web.connections]
+# Caps on open connections; a client over a cap is disconnected right away.
+# 0 disables a cap. Behind a reverse proxy every client shares the proxy's
+# IP, so raise or disable max_per_ip there.
+max = 4096
+# Per client IP (IPv6: per /64). Each agent keeps about one open, so this
+# also caps how many agents can share one public IP (e.g. NAT).
+max_per_ip = 64
+
 [web.tls]
 # Leave unset to use /etc/pulse-server/certs/{cert,key}.pem; a self-signed pair is
 # generated there on install. The key must be readable by the pulse-server
