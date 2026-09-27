@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use protocol::{AlertMetric, AlertOperator, AlertSeverity};
+use protocol::{AlertMetric, AlertOperator, AlertSeverity, MAX_RETENTION_DAYS, RetentionData};
 
 #[derive(Parser)]
 #[command(name = "pulse-server-cli", about = "Admin CLI for the Pulse server")]
@@ -18,8 +18,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub ca_cert: Option<PathBuf>,
 
-    /// User to log in as for `agents`, `rules`, `alerts` and `devices`
-    /// commands (prompted for if omitted).
+    /// User to log in as for `agents`, `rules`, `alerts`, `devices` and
+    /// `retention` commands (prompted for if omitted).
     /// The password is always prompted for without echo, or read from
     /// stdin when piped.
     #[arg(long, short = 'u', global = true)]
@@ -54,6 +54,12 @@ pub enum Command {
     Devices {
         #[command(subcommand)]
         command: DevicesCommand,
+    },
+    /// How long the server keeps metrics, PAM events and resolved alerts
+    /// (logs in first)
+    Retention {
+        #[command(subcommand)]
+        command: RetentionCommand,
     },
     /// Manage user accounts. Opens the server's SQLite file directly
     /// (no HTTP), so it must run on the server host with write access to it.
@@ -197,6 +203,22 @@ pub enum DevicesCommand {
     List,
     /// Stop pushing alerts to a device
     Remove { id: i64 },
+}
+
+#[derive(Subcommand)]
+pub enum RetentionCommand {
+    /// Show how long each kind of data is kept, and who changed it
+    Show,
+    /// Keep DATA (metrics, auth_events or alerts) for DAYS days; 0 keeps it
+    /// forever. Lowering it deletes older data right away. Overrides the
+    /// server config's [retention] until `retention reset`
+    Set {
+        data: RetentionData,
+        #[arg(value_parser = clap::value_parser!(u32).range(0..=MAX_RETENTION_DAYS as i64))]
+        days: u32,
+    },
+    /// Go back to the server config's [retention] default for DATA
+    Reset { data: RetentionData },
 }
 
 /// `90s`, `5m`, `1h`, or plain seconds.

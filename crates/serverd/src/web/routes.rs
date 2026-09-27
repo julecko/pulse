@@ -13,13 +13,16 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use std::sync::Arc;
 
-use axum::routing::{MethodRouter, delete, get, patch, post};
+use axum::routing::{MethodRouter, delete, get, patch, post, put};
 use axum::{Extension, Router};
 use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
-use super::{agents, alert_rules, alerts, auth, auth_events, metrics, notify, push_devices, users};
+use super::{
+    agents, alert_rules, alerts, auth, auth_events, metrics, notify, push_devices, retention, users,
+};
 use crate::alerting::Alerting;
+use crate::db::retention::Retention;
 
 /// Largest request body accepted on any route (axum's default is 2 MiB).
 /// A metrics snapshot is ~1 KiB for a typical host and ~30 KiB for one with
@@ -31,6 +34,7 @@ pub fn router(
     session_ttl_hours: u32,
     limits: &RateLimitConfig,
     alerting: Arc<Alerting>,
+    retention: Arc<Retention>,
 ) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
@@ -110,6 +114,8 @@ pub fn router(
             get(push_devices::list).post(push_devices::register),
         )
         .route("/push-devices/{id}", delete(push_devices::remove))
+        .route("/retention", get(retention::list))
+        .route("/retention/{data}", put(retention::set))
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_user,
@@ -121,6 +127,7 @@ pub fn router(
         .merge(user)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(Extension(alerting))
+        .layer(Extension(retention))
         .with_state(pool)
 }
 

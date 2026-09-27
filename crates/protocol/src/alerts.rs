@@ -53,7 +53,7 @@ impl AlertMetric {
 
 impl fmt::Display for AlertMetric {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.pad(self.as_str())
     }
 }
 
@@ -110,7 +110,7 @@ impl AlertOperator {
 
 impl fmt::Display for AlertOperator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.pad(self.as_str())
     }
 }
 
@@ -152,7 +152,7 @@ impl AlertSeverity {
 
 impl fmt::Display for AlertSeverity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.pad(self.as_str())
     }
 }
 

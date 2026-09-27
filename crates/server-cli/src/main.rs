@@ -1,7 +1,7 @@
 //! Admin CLI for the Pulse server: list/approve/revoke/remove agents, view
-//! their PAM events and metrics, manage alert rules, alerts and push
-//! devices (as a logged-in user), check health, and manage user accounts
-//! (directly in the server's database).
+//! their PAM events and metrics, manage alert rules, alerts, push devices
+//! and data retention (as a logged-in user), check health, and manage user
+//! accounts (directly in the server's database).
 
 mod cli;
 mod commands;
@@ -11,7 +11,7 @@ mod session;
 use clap::Parser;
 use cli::{
     AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, OnOff, PairingCommand,
-    RulesCommand, UsersCommand,
+    RetentionCommand, RulesCommand, UsersCommand,
 };
 use reqwest::header::HeaderMap;
 use session::Session;
@@ -49,6 +49,9 @@ async fn main() {
         Command::Devices { command } => {
             run_session(&base, cli.ca_cert, cli.user, Authed::Devices(command)).await
         }
+        Command::Retention { command } => {
+            run_session(&base, cli.ca_cert, cli.user, Authed::Retention(command)).await
+        }
         Command::Users { db, command } => match commands::users::open(db).await {
             Ok(pool) => match command {
                 UsersCommand::Add { username } => commands::users::add(&pool, &username).await,
@@ -73,6 +76,7 @@ enum Authed {
     Rules(RulesCommand),
     Alerts(AlertsCommand),
     Devices(DevicesCommand),
+    Retention(RetentionCommand),
 }
 
 /// Logs in, runs `command`, and logs out again.
@@ -90,6 +94,7 @@ async fn run_session(
         Authed::Rules(command) => run_rules(client, base, command).await,
         Authed::Alerts(command) => run_alerts(client, base, command).await,
         Authed::Devices(command) => run_devices(client, base, command).await,
+        Authed::Retention(command) => run_retention(client, base, command).await,
     };
     session.logout().await;
     result
@@ -182,5 +187,18 @@ async fn run_devices(
     match command {
         DevicesCommand::List => commands::alerts::list_devices(client, base).await,
         DevicesCommand::Remove { id } => commands::alerts::remove_device(client, base, id).await,
+    }
+}
+
+async fn run_retention(
+    client: &reqwest::Client,
+    base: &str,
+    command: RetentionCommand,
+) -> Result<(), String> {
+    use commands::retention as r;
+    match command {
+        RetentionCommand::Show => r::show(client, base).await,
+        RetentionCommand::Set { data, days } => r::set(client, base, data, Some(days)).await,
+        RetentionCommand::Reset { data } => r::set(client, base, data, None).await,
     }
 }

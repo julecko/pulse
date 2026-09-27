@@ -65,6 +65,8 @@ max_per_ip = 64
 
 [retention]
 # Days of rows to keep; older rows are deleted hourly. 0 keeps rows forever.
+# These are defaults: `pulse-server-cli retention set` overrides them at
+# runtime (no restart), until `pulse-server-cli retention reset`.
 metrics_days = 14
 auth_events_days = 14
 # Resolved alerts, by when they resolved; active alerts are always kept.

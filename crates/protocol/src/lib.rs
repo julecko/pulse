@@ -3,6 +3,7 @@ mod auth;
 mod metrics;
 mod notify;
 mod pairing;
+mod retention;
 mod text;
 mod user;
 
@@ -19,5 +20,6 @@ pub use pairing::{
     AGENT_SECRET_LEN, AgentSummary, PairRequest, PairResponse, PairingStatus, SetPairingRequest,
     agent_fingerprint, is_valid_agent_secret,
 };
+pub use retention::{MAX_RETENTION_DAYS, RetentionData, RetentionSetting, SetRetention};
 pub use text::{escape_for_display, is_unsafe_display_char};
 pub use user::{LoginRequest, LoginResponse, MAX_USERNAME_LEN, UserInfo, is_valid_username};

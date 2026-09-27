@@ -8,6 +8,7 @@ mod metrics;
 mod notify;
 mod push_devices;
 mod rate_limit;
+mod retention;
 mod routes;
 mod users;
 
@@ -69,6 +70,7 @@ pub async fn serve(
     cfg: &WebConfig,
     pool: SqlitePool,
     alerting: Arc<crate::alerting::Alerting>,
+    retention: Arc<crate::db::retention::Retention>,
 ) -> Result<(), WebError> {
     let cert = cfg.tls.resolved_cert();
     let key = cfg.tls.resolved_key();
@@ -93,9 +95,17 @@ pub async fn serve(
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT);
 
-    let router = routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit, alerting).layer(
-        TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT),
-    );
+    let router = routes::router(
+        pool,
+        cfg.session_ttl_hours,
+        &cfg.rate_limit,
+        alerting,
+        retention,
+    )
+    .layer(TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        REQUEST_TIMEOUT,
+    ));
     server
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await

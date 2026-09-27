@@ -7,7 +7,7 @@ use protocol::{
 
 /// Sends `req`; on a non-success status, fails with the server's message
 /// (it says e.g. which field of a new rule is wrong).
-async fn send(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
+pub(super) async fn send(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
     let resp = req
         .send()
         .await
@@ -20,7 +20,9 @@ async fn send(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String>
     Err(format!("server error ({status}): {}", esc(&body)))
 }
 
-async fn json<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T, String> {
+pub(super) async fn json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, String> {
     resp.json()
         .await
         .map_err(|e| format!("invalid response: {e}"))

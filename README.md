@@ -147,12 +147,37 @@ Any field not present in the file falls back to its default (see each
 
 - `config/server.toml`: `[web] bind/session_ttl_hours`, `[web.tls] cert/key`, `[db] path`,
   `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever),
-  `[retention] alerts_days` (default 90), `[push] fcm_service_account`, `[log] ...`
+  `[retention] alerts_days` (default 90; all three can be overridden at
+  runtime, see [Data retention](#data-retention)), `[push] fcm_service_account`, `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
 to `/var/log/pulse-<app>/<app>.log` in release builds. `RUST_LOG` overrides
 `log.level` when set.
+
+### Data retention
+
+The server deletes old data every hour: metrics snapshots and PAM events
+by when it received them, and resolved alerts by when they resolved (active
+alerts are always kept). How long each is kept comes from `[retention]` in
+the server config, and any logged-in user can override it at runtime, no
+restart needed:
+
+```sh
+pulse-server-cli -u alice retention show              # what's in effect, who set it
+pulse-server-cli -u alice retention set metrics 30    # days; 0 keeps it forever
+pulse-server-cli -u alice retention set auth_events 90
+pulse-server-cli -u alice retention reset metrics     # back to the config default
+```
+
+The kinds of data are `metrics`, `auth_events` and `alerts`; days go up to
+3650. An override lasts until it's reset, across restarts and config
+changes. **Lowering a retention period deletes the older data right away**,
+and there's no undo. Every change is logged with the user who made it.
+
+HTTP routes, for logged-in users: `GET /retention` and
+`PUT /retention/{data}` (`{"days": 30}`, or `{"days": null}` to reset).
+Types are in `crates/protocol/src/retention.rs`.
 
 ## Installing (Debian/Ubuntu packages)
 

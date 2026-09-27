@@ -41,9 +41,10 @@ async fn main() {
     // measurably slower than the rest (see `credentials::DUMMY_PASSWORD_HASH`).
     std::sync::LazyLock::force(&credentials::DUMMY_PASSWORD_HASH);
 
+    let retention = db::retention::Retention::new(cfg.retention.clone());
     tokio::spawn(db::retention::cleanup_periodically(
         pool.clone(),
-        cfg.retention.clone(),
+        retention.clone(),
     ));
 
     let push = push::Push::from_config(&cfg.push).unwrap_or_else(|err| {
@@ -52,7 +53,7 @@ async fn main() {
     });
     let alerting = alerting::Alerting::new(push);
 
-    if let Err(err) = web::serve(&cfg.web, pool, alerting).await {
+    if let Err(err) = web::serve(&cfg.web, pool, alerting, retention).await {
         tracing::error!("pulse-serverd: web server error: {err}");
         std::process::exit(1);
     }
