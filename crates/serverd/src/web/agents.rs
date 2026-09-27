@@ -180,6 +180,15 @@ fn validate_pair_request(req: &PairRequest) -> Result<(), (StatusCode, String)> 
                 format!("{name} must be 1-{MAX_HOST_FIELD_LEN} bytes"),
             ));
         }
+        // Shown in `agents list`, where escape sequences could disguise a
+        // request (see protocol::is_unsafe_display_char). Real host info
+        // never contains them.
+        if value.chars().any(protocol::is_unsafe_display_char) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("{name} must not contain control characters"),
+            ));
+        }
     }
     Ok(())
 }

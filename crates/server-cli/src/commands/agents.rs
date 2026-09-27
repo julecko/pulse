@@ -1,4 +1,7 @@
-use protocol::{AgentSummary, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest};
+use protocol::{
+    AgentSummary, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest,
+    escape_for_display as esc,
+};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -24,7 +27,11 @@ pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     for agent in agents {
         println!(
             "{:<4} {:<9} {:<20} {:<36} {:<20}",
-            agent.id, agent.status, agent.hostname, agent.fingerprint, agent.created_at
+            agent.id,
+            esc(&agent.status),
+            esc(&agent.hostname),
+            esc(&agent.fingerprint),
+            esc(&agent.created_at)
         );
     }
     Ok(())
@@ -115,13 +122,13 @@ pub async fn events(client: &reqwest::Client, base: &str, id: i64) -> Result<(),
     for event in events {
         println!(
             "{:<20} {:<14} {:<10} {:<12} {:<12} {:<20} {:<10}",
-            event.occurred_at,
-            event.kind,
-            event.service,
-            event.user,
-            event.ruser.as_deref().unwrap_or("-"),
-            event.rhost.as_deref().unwrap_or("-"),
-            event.tty.as_deref().unwrap_or("-"),
+            esc(&event.occurred_at),
+            esc(&event.kind),
+            esc(&event.service),
+            esc(&event.user),
+            esc(event.ruser.as_deref().unwrap_or("-")),
+            esc(event.rhost.as_deref().unwrap_or("-")),
+            esc(event.tty.as_deref().unwrap_or("-")),
         );
     }
     Ok(())
@@ -182,14 +189,24 @@ pub async fn metrics(
             .iter()
             .map(|d| {
                 let used = d.total_bytes.saturating_sub(d.available_bytes);
-                format!("{} {}/{}", d.mount_point, gib(used), gib(d.total_bytes))
+                format!(
+                    "{} {}/{}",
+                    esc(&d.mount_point),
+                    gib(used),
+                    gib(d.total_bytes)
+                )
             })
             .collect::<Vec<_>>()
             .join(", ");
 
         println!(
             "{:<20} {:>6} {:>19} {:>19} {:>16} {}",
-            record.created_at, cpu, memory, swap, load, disks
+            esc(&record.created_at),
+            cpu,
+            memory,
+            swap,
+            load,
+            disks
         );
     }
     Ok(())
