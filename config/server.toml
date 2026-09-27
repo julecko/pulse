@@ -78,6 +78,14 @@ auth_events_days = 14
 # Resolved alerts, by when they resolved; active alerts are always kept.
 alerts_days = 90
 
+[app_releases]
+# Android app releases uploaded with `pulse-server-cli app upload`, which the
+# app downloads to update itself. Leave dir unset: ./data/app-releases in debug,
+# /var/lib/pulse-server/app-releases in release.
+# dir = "data/app-releases"
+# Largest APK accepted, in MiB.
+max_size_mb = 200
+
 [geoip]
 # MaxMind GeoLite2 City database, for geo alerts (`pulse-server-cli
 # geo-alerts`). Not shipped: get it with MaxMind's geoipupdate (free

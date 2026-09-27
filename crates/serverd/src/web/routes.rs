@@ -10,19 +10,22 @@
 //!   [`auth::require_user`]); everything `pulse-server-cli` manages
 
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
 use axum::middleware;
 use std::sync::Arc;
 
 use axum::routing::{MethodRouter, delete, get, patch, post, put};
 use axum::{Extension, Router};
 use sqlx::SqlitePool;
+use tower_http::timeout::TimeoutLayer;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
 use super::{
-    agents, alert_rules, alerts, auth, auth_events, geo_alerts, metrics, notify, offline,
-    pam_notifications, push_devices, retention, users,
+    agents, alert_rules, alerts, app_releases, auth, auth_events, geo_alerts, metrics, notify,
+    offline, pam_notifications, push_devices, retention, users,
 };
 use crate::alerting::Alerting;
+use crate::app_releases::AppReleases;
 use crate::db::retention::Retention;
 
 /// Largest request body accepted on any route (axum's default is 2 MiB).
@@ -36,6 +39,7 @@ pub fn router(
     limits: &RateLimitConfig,
     alerting: Arc<Alerting>,
     retention: Arc<Retention>,
+    app_releases: Arc<AppReleases>,
 ) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
@@ -129,19 +133,47 @@ pub fn router(
         .route("/push-devices/{id}", delete(push_devices::remove))
         .route("/retention", get(retention::list))
         .route("/retention/{data}", put(retention::set))
+        .route("/app-releases", get(app_releases::list))
+        .route("/app-releases/latest", get(app_releases::latest))
+        .route("/app-releases/{version_code}", delete(app_releases::remove))
+        .route(
+            "/app-releases/{version_code}/apk",
+            get(app_releases::download),
+        )
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_user,
         ));
 
+    // Uploads carry a whole APK, so they get their own body size limit
+    // (`[app_releases] max_size_mb`, enforced while streaming) and timeout.
+    let upload = Router::new()
+        .route(
+            "/app-releases/{version_code}",
+            put(app_releases::upload).layer(DefaultBodyLimit::disable()),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            pool.clone(),
+            auth::require_user,
+        ))
+        .layer(timeout(super::UPLOAD_TIMEOUT));
+
     Router::new()
         .merge(public)
         .merge(agent)
         .merge(user)
+        .layer(timeout(super::REQUEST_TIMEOUT))
+        .merge(upload)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(Extension(alerting))
         .layer(Extension(retention))
+        .layer(Extension(app_releases))
         .with_state(pool)
+}
+
+/// `408` once a request has taken `limit`.
+fn timeout(limit: std::time::Duration) -> TimeoutLayer {
+    TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, limit)
 }
 
 /// `route` behind `limiter`, or unchanged if that limit is disabled.

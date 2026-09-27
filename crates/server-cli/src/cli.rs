@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use protocol::{
-    AlertMetric, AlertOperator, AlertSeverity, AuthEventKind, MAX_RETENTION_DAYS, RetentionData,
+    AlertMetric, AlertOperator, AlertSeverity, AuthEventKind, MAX_APP_RELEASE_NOTES_LEN,
+    MAX_APP_VERSION_CODE, MAX_RETENTION_DAYS, RetentionData, is_valid_app_version_name,
 };
 
 #[derive(Parser)]
@@ -21,7 +22,7 @@ pub struct Cli {
     pub ca_cert: Option<PathBuf>,
 
     /// User to log in as for `agents`, `rules`, `alerts`, `geo-alerts`,
-    /// `devices` and `retention` commands (prompted for if omitted).
+    /// `devices`, `retention` and `app` commands (prompted for if omitted).
     /// The password is always prompted for without echo, or read from
     /// stdin when piped.
     #[arg(long, short = 'u', global = true)]
@@ -68,6 +69,12 @@ pub enum Command {
     Retention {
         #[command(subcommand)]
         command: RetentionCommand,
+    },
+    /// Releases of the Android app, which it downloads from the server to
+    /// update itself (logs in first)
+    App {
+        #[command(subcommand)]
+        command: AppCommand,
     },
     /// Manage user accounts. Opens the server's SQLite file directly
     /// (no HTTP), so it must run on the server host with write access to it.
@@ -295,6 +302,50 @@ pub enum RetentionCommand {
     },
     /// Go back to the server config's [retention] default for DATA
     Reset { data: RetentionData },
+}
+
+#[derive(Subcommand)]
+pub enum AppCommand {
+    /// List uploaded releases, newest first
+    List,
+    /// Upload an APK as a new release. The app installs the release with
+    /// the highest version code when it's newer than its own, so give each
+    /// build a higher `versionCode` (app/build.gradle.kts) and sign it with
+    /// the same key as the installed app, or Android refuses the update
+    Upload {
+        /// The signed APK, e.g. app/build/outputs/apk/release/app-release.apk
+        apk: PathBuf,
+        /// The APK's versionCode; the app checks the download matches it
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=MAX_APP_VERSION_CODE as i64))]
+        version_code: u32,
+        /// The APK's versionName, shown in the app, e.g. 1.2
+        #[arg(long, value_parser = parse_version_name)]
+        version_name: String,
+        /// What changed, shown in the app
+        #[arg(long, value_parser = parse_notes)]
+        notes: Option<String>,
+        /// Don't push "update available" to registered devices
+        #[arg(long)]
+        no_push: bool,
+    },
+    /// Delete a release and its APK
+    Remove { version_code: u32 },
+}
+
+fn parse_version_name(s: &str) -> Result<String, String> {
+    if is_valid_app_version_name(s) {
+        Ok(s.to_string())
+    } else {
+        Err("must be 1-64 printable characters without spaces, e.g. 1.2".to_string())
+    }
+}
+
+fn parse_notes(s: &str) -> Result<String, String> {
+    if s.chars().count() > MAX_APP_RELEASE_NOTES_LEN {
+        Err(format!("at most {MAX_APP_RELEASE_NOTES_LEN} characters"))
+    } else {
+        Ok(s.to_string())
+    }
 }
 
 /// `90s`, `5m`, `1h`, `2d`, or plain seconds.

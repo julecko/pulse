@@ -1,6 +1,7 @@
 mod agents;
 mod alert_rules;
 mod alerts;
+mod app_releases;
 mod auth;
 mod auth_events;
 mod conn_limit;
@@ -29,7 +30,6 @@ use hyper_util::server::conn::auto::Builder;
 use pulse_shared::tls::TlsConfig;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tower_http::timeout::TimeoutLayer;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -48,8 +48,10 @@ pub struct WebConfig {
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Longest a whole request may take once its headers are in, body and
 /// handler included (a login can wait for a free password check); `408`
-/// after that.
+/// after that. Streamed response bodies (APK downloads) aren't limited.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// [`REQUEST_TIMEOUT`] for app release uploads, whose body is a whole APK.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 impl Default for WebConfig {
     fn default() -> Self {
@@ -76,6 +78,7 @@ pub async fn serve(
     pool: SqlitePool,
     alerting: Arc<crate::alerting::Alerting>,
     retention: Arc<crate::db::retention::Retention>,
+    app_releases: Arc<crate::app_releases::AppReleases>,
 ) -> Result<(), WebError> {
     let cert = cfg.tls.resolved_cert();
     let key = cfg.tls.resolved_key();
@@ -106,11 +109,8 @@ pub async fn serve(
         &cfg.rate_limit,
         alerting,
         retention,
-    )
-    .layer(TimeoutLayer::with_status_code(
-        StatusCode::REQUEST_TIMEOUT,
-        REQUEST_TIMEOUT,
-    ));
+        app_releases,
+    );
     server
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await

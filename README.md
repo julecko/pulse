@@ -5,7 +5,9 @@ metrics (CPU, memory, disk, host info, ...) reported by one or more **agents**
 running on the machines you want to watch. Agents send a metrics snapshot every
 `interval_secs` (agent config) over HTTPS, and the server stores them in
 SQLite for `[retention] metrics_days`. A mobile app to view everything
-remotely is planned next.
+remotely is in
+[pulse-client-mobile](https://github.com/julecko/pulse-client-mobile), and
+the server hands it updates (see [Mobile app updates](#mobile-app-updates)).
 
 Workspace layout:
 
@@ -15,7 +17,8 @@ crates/
   agent-cli/     pulse-agent-cli: agent identity (fingerprint, reset), notify,
                  PAM hook
   serverd/       pulse-serverd: HTTPS API + SQLite storage, runs on the central server
-  server-cli/    pulse-server-cli: admin CLI (agents, alert rules/alerts, users)
+  server-cli/    pulse-server-cli: admin CLI (agents, alert rules/alerts, users,
+                 app releases)
   protocol/      shared wire types (metrics payloads) used by agent and server
   pulse-shared/  shared config loading + logging setup used by all binaries,
                  plus agent identity (`agent` feature)
@@ -149,7 +152,8 @@ Any field not present in the file falls back to its default (see each
   `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever),
   `[retention] alerts_days` (default 90; all three can be overridden at
   runtime, see [Data retention](#data-retention)), `[push] fcm_service_account`,
-  `[geoip] database` (see [Geo alerts](#geo-alerts)), `[log] ...`
+  `[geoip] database` (see [Geo alerts](#geo-alerts)),
+  `[app_releases] dir/max_size_mb` (see [Mobile app updates](#mobile-app-updates)), `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
@@ -774,6 +778,46 @@ HTTP routes, all for logged-in users: `GET/POST /alert-rules`,
 `POST /alerts/{id}/acknowledge`, `GET/POST /push-devices`,
 `DELETE /push-devices/{id}`. Request and response types are in
 `crates/protocol/src/alerts.rs`.
+
+## Mobile app updates
+
+The server hosts releases of the Android app, so it can update itself
+without an app store: you upload each new APK with `pulse-server-cli`, and
+the app, which checks the server whenever it starts, downloads the newest
+release and installs it.
+
+```sh
+# in pulse-client-mobile: bump versionCode (and versionName) in
+# app/build.gradle.kts, then build a signed release APK
+pulse-server-cli -u alice app upload app-release.apk \
+    --version-code 3 --version-name 1.2 --notes "Offline alerts in the feed"
+pulse-server-cli -u alice app list
+pulse-server-cli -u alice app remove 3     # delete a release and its APK
+```
+
+The release with the highest version code is the latest one; the app only
+installs it when it's newer than its own, so each upload needs a higher
+version code (a second upload of the same one is refused). Pass the APK's
+real `versionCode`: the app checks the downloaded APK against it (and
+against the SHA-256 the server recorded) and refuses a mismatch. Android
+itself only accepts an update signed with the same key as the installed
+app, so always sign with the same release key.
+
+Unless you pass `--no-push`, every device registered for pushes is told
+"update available" (needs `[push]`, see [Push notifications](#push-notifications)).
+
+APKs are stored as files in `[app_releases] dir` (default
+`/var/lib/pulse-server/app-releases`, `./data/app-releases` in debug
+builds), up to `[app_releases] max_size_mb` each (default 200). Uploads may
+take up to 15 minutes, unlike the 30 seconds other requests get.
+
+HTTP routes, all for logged-in users: `GET /app-releases` (newest first),
+`GET /app-releases/latest` (`404` when there's none),
+`GET /app-releases/{version_code}/apk` (the APK; supports `Range`),
+`PUT /app-releases/{version_code}?version_name=1.2&notes=...&notify=false`
+with the APK as the body (`201`; `409` if it exists), and
+`DELETE /app-releases/{version_code}`. Types are in
+`crates/protocol/src/app_release.rs`.
 
 ## Development
 

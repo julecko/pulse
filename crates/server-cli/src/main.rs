@@ -1,6 +1,6 @@
 //! Admin CLI for the Pulse server: list/approve/revoke/remove agents, view
 //! their PAM events and metrics, manage alert rules, alerts, push devices
-//! and data retention (as a logged-in user), check health, and manage user
+//! data retention and app releases (as a logged-in user), check health, and manage user
 //! accounts (directly in the server's database).
 
 mod cli;
@@ -10,7 +10,7 @@ mod session;
 
 use clap::Parser;
 use cli::{
-    AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, GeoAlertsCommand,
+    AgentsCommand, AlertsCommand, AppCommand, Cli, Command, DevicesCommand, GeoAlertsCommand,
     OfflineAlertCommand, OnOff, PairingCommand, PamNotifyCommand, RetentionCommand, RulesCommand,
     UsersCommand,
 };
@@ -56,6 +56,9 @@ async fn main() {
         Command::Retention { command } => {
             run_session(&base, cli.ca_cert, cli.user, Authed::Retention(command)).await
         }
+        Command::App { command } => {
+            run_session(&base, cli.ca_cert, cli.user, Authed::App(command)).await
+        }
         Command::Users { db, command } => match commands::users::open(db).await {
             Ok(pool) => match command {
                 UsersCommand::Add { username } => commands::users::add(&pool, &username).await,
@@ -82,6 +85,7 @@ enum Authed {
     Devices(DevicesCommand),
     GeoAlerts(GeoAlertsCommand),
     Retention(RetentionCommand),
+    App(AppCommand),
 }
 
 /// Logs in, runs `command`, and logs out again.
@@ -112,6 +116,7 @@ async fn run_session(
             }
         }
         Authed::Retention(command) => run_retention(client, base, command).await,
+        Authed::App(command) => run_app(client, base, command).await,
     };
     session.logout().await;
     result
@@ -240,5 +245,31 @@ async fn run_retention(
         RetentionCommand::Show => r::show(client, base).await,
         RetentionCommand::Set { data, days } => r::set(client, base, data, Some(days)).await,
         RetentionCommand::Reset { data } => r::set(client, base, data, None).await,
+    }
+}
+
+async fn run_app(client: &reqwest::Client, base: &str, command: AppCommand) -> Result<(), String> {
+    use commands::app as a;
+    match command {
+        AppCommand::List => a::list(client, base).await,
+        AppCommand::Upload {
+            apk,
+            version_code,
+            version_name,
+            notes,
+            no_push,
+        } => {
+            a::upload(
+                client,
+                base,
+                &apk,
+                version_code,
+                version_name,
+                notes,
+                !no_push,
+            )
+            .await
+        }
+        AppCommand::Remove { version_code } => a::remove(client, base, version_code).await,
     }
 }
