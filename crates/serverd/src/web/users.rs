@@ -3,22 +3,36 @@
 //! route: users are created with `pulse-server-cli users add`, which writes to
 //! the database directly.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+use std::time::Instant;
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use protocol::{LoginRequest, LoginResponse, UserInfo};
 use sqlx::SqlitePool;
 
 use super::auth::AuthedUser;
+use super::rate_limit::{self, RateLimiter};
 use crate::credentials;
 
 /// How long a session from [`login`] stays valid; from `[web] session_ttl_hours`.
 #[derive(Clone, Copy)]
 pub struct SessionTtl(pub u32);
 
+/// Failed logins per username, from any IP (see
+/// [`rate_limit::RateLimitConfig::login_failures_per_user_per_minute`]);
+/// `None` when disabled.
+#[derive(Clone)]
+pub struct UserLoginLimiter(pub Option<Arc<RateLimiter<String>>>);
+
 const INVALID_CREDENTIALS: &str = "invalid username or password";
+
+/// Longest username `pulse-server-cli users add` accepts; longer ones can't
+/// exist, so they're rejected before touching the database or the per-user
+/// limiter (which would otherwise keep a bucket per junk name).
+const MAX_USERNAME_LEN: usize = 64;
 
 /// Password checks allowed at once. Each argon2 verify holds ~19 MiB for
 /// its duration, so without a cap a flood of logins (even rate-limited per
@@ -31,12 +45,47 @@ static PASSWORD_CHECKS: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
 pub async fn login(
     State(pool): State<SqlitePool>,
     Extension(SessionTtl(ttl_hours)): Extension<SessionTtl>,
+    Extension(UserLoginLimiter(user_limiter)): Extension<UserLoginLimiter>,
     Json(req): Json<LoginRequest>,
+) -> Response {
+    if req.username.len() > MAX_USERNAME_LEN {
+        tracing::warn!("failed login: username too long");
+        return (StatusCode::UNAUTHORIZED, INVALID_CREDENTIALS).into_response();
+    }
+
+    // Unknown usernames get a bucket too, so being throttled doesn't reveal
+    // whether an account exists.
+    if let Some(limiter) = &user_limiter
+        && let Err(retry_after) = limiter.check(req.username.clone(), Instant::now())
+    {
+        tracing::warn!(limiter = limiter.name(), username = %req.username, "rate limited");
+        return rate_limit::too_many_requests(retry_after);
+    }
+
+    match verify_and_create_session(&pool, ttl_hours, req.username.clone(), req.password).await {
+        Ok(session) => {
+            if let Some(limiter) = &user_limiter {
+                limiter.refund(&req.username);
+            }
+            session.into_response()
+        }
+        Err(err) => err.into_response(),
+    }
+}
+
+/// Checks the password and, if it's right, starts a session. `Err` with
+/// `401` for wrong credentials.
+async fn verify_and_create_session(
+    pool: &SqlitePool,
+    ttl_hours: u32,
+    username: String,
+    password: String,
 ) -> Result<Json<LoginResponse>, (StatusCode, String)> {
+    let req = LoginRequest { username, password };
     let user: Option<(i64, String)> =
         sqlx::query_as("SELECT id, password_hash FROM users WHERE username = ?")
             .bind(&req.username)
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -70,7 +119,7 @@ pub async fn login(
     .bind(user_id)
     .bind(credentials::hash_token(&token))
     .bind(format!("+{ttl_hours} hours"))
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

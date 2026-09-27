@@ -34,6 +34,9 @@ session_ttl_hours = 168
 # a reverse proxy (all requests come from its IP; rate-limit there instead).
 # Failed logins (successful ones don't count).
 login_failures_per_minute = 5
+# Failed logins per username, from any IP: throttles guessing from many
+# addresses. It slows logins down but never locks the account.
+login_failures_per_user_per_minute = 5
 # Agent pairing polls. Every agent polls once a minute, even after approval,
 # so this also caps how many agents can share one public IP (e.g. NAT).
 pair_per_minute = 30

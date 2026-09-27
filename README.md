@@ -299,18 +299,22 @@ request again, with a secret, next time pairing is open.
 
 ### Rate limiting
 
-The routes anyone can reach are rate-limited per client IP (IPv6: per /64),
-configurable under `[web.rate_limit]` in the server config:
+The routes anyone can reach are rate-limited, configurable under
+`[web.rate_limit]` in the server config:
 
-| Route | Default | Counts |
-|---|---|---|
-| `POST /auth/login` | 5 per minute | failed logins only |
-| `POST /agents/pair` | 30 per minute | every request |
+| Route | Default | Per | Counts |
+|---|---|---|---|
+| `POST /auth/login` | 5 per minute | client IP (IPv6: per /64) | failed logins only |
+| `POST /auth/login` | 5 per minute | username, from any IP | failed logins only |
+| `POST /agents/pair` | 30 per minute | client IP (IPv6: per /64) | every request |
 
 Over the limit, the server answers `429` with `Retry-After` (the agent waits
 that long; `pulse-server-cli` says how long). Five wrong passwords lock
 that address out briefly, even for the right password, so guesses can't
-continue. The pairing limit also caps how many agents can share one public
+continue. The per-username limit catches guessing spread over many
+addresses. It only slows logins down, so nobody can lock you out of your
+account for good. Unknown usernames are limited the same way, so a `429`
+doesn't reveal whether an account exists. The pairing limit also caps how many agents can share one public
 IP (e.g. behind NAT); raise it if you have more. Behind a reverse proxy,
 every client shares the proxy's IP: set the limits to `0` and rate-limit at
 the proxy. Password checks are also limited to a few at a time (each takes

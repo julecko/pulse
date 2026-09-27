@@ -3,7 +3,8 @@
 //! Routes are split by who may call them:
 //! - `public`: no authentication; only what's needed before anyone can
 //!   authenticate (health check, user login, agent pairing). Login and
-//!   pairing are rate-limited per client IP (see [`rate_limit`]).
+//!   pairing are rate-limited per client IP (see [`rate_limit`]), and
+//!   logins also per username (see [`users::login`]).
 //! - `agent`: require a valid agent bearer token (see [`auth::require_agent`])
 //! - `user`: require a logged-in user's session token (see
 //!   [`auth::require_user`]); everything `pulse-server-cli` manages
@@ -22,10 +23,14 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
         .route(
             "/auth/login",
             rate_limited(
-                post(users::login).layer(Extension(users::SessionTtl(session_ttl_hours))),
+                post(users::login),
                 RateLimiter::failures_only("login", limits.login_failures_per_minute),
             ),
         )
+        .layer(Extension(users::SessionTtl(session_ttl_hours)))
+        .layer(Extension(users::UserLoginLimiter(
+            RateLimiter::failures_only("login_user", limits.login_failures_per_user_per_minute),
+        )))
         .route(
             "/agents/pair",
             rate_limited(
