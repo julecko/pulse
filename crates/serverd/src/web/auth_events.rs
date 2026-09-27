@@ -1,6 +1,7 @@
 //! PAM auth events (sessions, failed auth) forwarded by agents, and pushed
 //! to every registered device for the kinds the agent's PAM push settings
-//! pick (see [`super::pam_notifications`]).
+//! pick (see [`super::pam_notifications`]). SSH logins are also checked for
+//! geo alerts (see [`crate::geo_alerts`]).
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -77,6 +78,10 @@ pub async fn ingest(
     );
 
     push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
+    alerting
+        .geo()
+        .evaluate(&pool, alerting.push(), limiter.as_deref(), agent.id, &event)
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

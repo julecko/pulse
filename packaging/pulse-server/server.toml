@@ -73,6 +73,13 @@ auth_events_days = 14
 # Resolved alerts, by when they resolved; active alerts are always kept.
 alerts_days = 90
 
+[geoip]
+# MaxMind GeoLite2 City database, for geo alerts (`pulse-server-cli
+# geo-alerts`). Not shipped: get it with MaxMind's geoipupdate (free
+# account), which keeps it at the default path below. Read at startup, so
+# restart after it updates. Missing: geo alerts are just disabled.
+# database = "/var/lib/GeoIP/GeoLite2-City.mmdb"
+
 [push]
 # Firebase service account JSON key (Firebase console > Project settings >
 # Service accounts > Generate new private key), for pushing alerts from rules

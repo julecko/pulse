@@ -20,8 +20,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub ca_cert: Option<PathBuf>,
 
-    /// User to log in as for `agents`, `rules`, `alerts`, `devices` and
-    /// `retention` commands (prompted for if omitted).
+    /// User to log in as for `agents`, `rules`, `alerts`, `geo-alerts`,
+    /// `devices` and `retention` commands (prompted for if omitted).
     /// The password is always prompted for without echo, or read from
     /// stdin when piped.
     #[arg(long, short = 'u', global = true)]
@@ -50,6 +50,12 @@ pub enum Command {
     Alerts {
         #[command(subcommand)]
         command: AlertsCommand,
+    },
+    /// Alert when an SSH login comes from a country that isn't allowed
+    /// (needs a GeoIP database on the server; logs in first)
+    GeoAlerts {
+        #[command(subcommand)]
+        command: GeoAlertsCommand,
     },
     /// Manage devices that get alert pushes; the mobile app registers them
     /// (logs in first)
@@ -221,6 +227,28 @@ pub enum AlertsCommand {
     },
     /// Mark an alert as seen
     Ack { id: i64 },
+}
+
+#[derive(Subcommand)]
+pub enum GeoAlertsCommand {
+    /// Show the allowed countries and the server's GeoIP database
+    Show,
+    /// Turn geo alerts on: SSH logins from any other country (or one the
+    /// database doesn't know) raise an alert. Replaces all settings
+    Set {
+        /// Allowed countries, as two-letter ISO codes: SK CZ AT
+        #[arg(required = true)]
+        countries: Vec<String>,
+        /// Also alert on failed logins, not just successful ones (noisy on
+        /// a server that's open to the internet)
+        #[arg(long)]
+        failures: bool,
+        /// Only record the alerts, don't push them
+        #[arg(long)]
+        no_push: bool,
+    },
+    /// Turn geo alerts off
+    Off,
 }
 
 #[derive(Subcommand)]

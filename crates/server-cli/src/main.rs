@@ -10,8 +10,8 @@ mod session;
 
 use clap::Parser;
 use cli::{
-    AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, OnOff, PairingCommand,
-    PamNotifyCommand, RetentionCommand, RulesCommand, UsersCommand,
+    AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, GeoAlertsCommand, OnOff,
+    PairingCommand, PamNotifyCommand, RetentionCommand, RulesCommand, UsersCommand,
 };
 use reqwest::header::HeaderMap;
 use session::Session;
@@ -49,6 +49,9 @@ async fn main() {
         Command::Devices { command } => {
             run_session(&base, cli.ca_cert, cli.user, Authed::Devices(command)).await
         }
+        Command::GeoAlerts { command } => {
+            run_session(&base, cli.ca_cert, cli.user, Authed::GeoAlerts(command)).await
+        }
         Command::Retention { command } => {
             run_session(&base, cli.ca_cert, cli.user, Authed::Retention(command)).await
         }
@@ -76,6 +79,7 @@ enum Authed {
     Rules(RulesCommand),
     Alerts(AlertsCommand),
     Devices(DevicesCommand),
+    GeoAlerts(GeoAlertsCommand),
     Retention(RetentionCommand),
 }
 
@@ -94,6 +98,18 @@ async fn run_session(
         Authed::Rules(command) => run_rules(client, base, command).await,
         Authed::Alerts(command) => run_alerts(client, base, command).await,
         Authed::Devices(command) => run_devices(client, base, command).await,
+        Authed::GeoAlerts(command) => {
+            use commands::geo_alerts as g;
+            match command {
+                GeoAlertsCommand::Show => g::show(client, base).await,
+                GeoAlertsCommand::Set {
+                    countries,
+                    failures,
+                    no_push,
+                } => g::set(client, base, countries, failures, !no_push).await,
+                GeoAlertsCommand::Off => g::off(client, base).await,
+            }
+        }
         Authed::Retention(command) => run_retention(client, base, command).await,
     };
     session.logout().await;

@@ -2,6 +2,8 @@ mod alerting;
 mod config;
 mod credentials;
 mod db;
+mod geo_alerts;
+mod geoip;
 mod push;
 mod web;
 
@@ -51,7 +53,8 @@ async fn main() {
         tracing::error!("pulse-serverd: push notifications: {err}");
         std::process::exit(1);
     });
-    let alerting = alerting::Alerting::new(push);
+    let geoip = geoip::GeoIp::load(&cfg.geoip);
+    let alerting = alerting::Alerting::new(push, geo_alerts::GeoAlerts::new(geoip));
 
     if let Err(err) = web::serve(&cfg.web, pool, alerting, retention).await {
         tracing::error!("pulse-serverd: web server error: {err}");

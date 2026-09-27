@@ -1,5 +1,6 @@
 mod alerts;
 mod auth;
+mod geo;
 mod metrics;
 mod notify;
 mod pairing;
@@ -12,6 +13,10 @@ pub use alerts::{
     PushPlatform, RegisterPushDevice, UpdateAlertRule,
 };
 pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord, PamNotifications, SetPamNotifications};
+pub use geo::{
+    GeoAlertInfo, GeoAlertSettings, GeoDatabaseInfo, MAX_ALLOWED_COUNTRIES, SetGeoAlertSettings,
+    is_valid_country_code,
+};
 pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
 pub use notify::{
     LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,

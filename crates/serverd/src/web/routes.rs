@@ -19,7 +19,7 @@ use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
 use super::{
-    agents, alert_rules, alerts, auth, auth_events, metrics, notify, pam_notifications,
+    agents, alert_rules, alerts, auth, auth_events, geo_alerts, metrics, notify, pam_notifications,
     push_devices, retention, users,
 };
 use crate::alerting::Alerting;
@@ -115,6 +115,10 @@ pub fn router(
             patch(alert_rules::update).delete(alert_rules::remove),
         )
         .route("/alerts", get(alerts::list))
+        .route(
+            "/geo-alerts/settings",
+            get(geo_alerts::get).put(geo_alerts::set),
+        )
         .route("/alerts/{id}/acknowledge", post(alerts::acknowledge))
         .route(
             "/push-devices",

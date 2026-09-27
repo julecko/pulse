@@ -237,6 +237,10 @@ pub struct AlertRecord {
     pub resolved_at: Option<String>,
     pub acknowledged_at: Option<String>,
     pub acknowledged_by: Option<String>,
+    /// Set for geo alerts (an SSH login from a country that isn't
+    /// allowed), which have no rule; they resolve when acknowledged.
+    #[serde(default)]
+    pub geo: Option<crate::GeoAlertInfo>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -148,7 +148,8 @@ Any field not present in the file falls back to its default (see each
 - `config/server.toml`: `[web] bind/session_ttl_hours`, `[web.tls] cert/key`, `[db] path`,
   `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever),
   `[retention] alerts_days` (default 90; all three can be overridden at
-  runtime, see [Data retention](#data-retention)), `[push] fcm_service_account`, `[log] ...`
+  runtime, see [Data retention](#data-retention)), `[push] fcm_service_account`,
+  `[geoip] database` (see [Geo alerts](#geo-alerts)), `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
@@ -603,6 +604,53 @@ pulse-server-cli -u alice alerts ack <id>           # mark as seen
 quoted), and `--for` takes `90s`, `5m`, `1h` or plain seconds. How long a
 condition has held is kept in memory, so after a server restart a `--for`
 window starts over.
+
+### Geo alerts
+
+The server can raise an alert when someone logs in over SSH from a country
+you didn't allow, e.g. your server normally only sees logins from Slovakia
+and suddenly `root` logs in from abroad. It looks the client's IP up in a
+MaxMind GeoLite2 City database, locally: no IP leaves the server.
+
+The database isn't shipped (MaxMind's license needs a free account). Get
+`GeoLite2-City.mmdb` with MaxMind's `geoipupdate`, which keeps it at
+`/var/lib/GeoIP/GeoLite2-City.mmdb`, where release builds look by default
+(debug builds use `./GeoLite2-City.mmdb` in the repo root, which is
+gitignored; `[geoip] database` sets another path). The server reads it at
+startup, so restart it after the database updates; without one, geo alerts
+are simply disabled.
+
+```sh
+pulse-server-cli -u alice geo-alerts set SK CZ           # allowed countries (ISO codes)
+pulse-server-cli -u alice geo-alerts set SK --failures   # also failed logins
+pulse-server-cli -u alice geo-alerts set SK --no-push    # record only, don't push
+pulse-server-cli -u alice geo-alerts show                # settings + loaded database
+pulse-server-cli -u alice geo-alerts off
+```
+
+`set` replaces all settings. It needs the PAM hook on the agent's host
+(see [Tracking logins](#tracking-logins-pam)); only `sshd` events count,
+with the client's IP (sshd's default; with `UseDNS yes` the address is a
+hostname and is skipped). Logins from private, LAN or VPN addresses
+(10/8, 192.168/16, 100.64/10, fd00::/8, ...) are never checked. An IP the
+database doesn't know raises an alert too, since it can't be shown to be
+allowed.
+
+A geo alert is a normal alert: `critical` for a successful login,
+`warning` for a failed one, shown by `alerts list` ("SSH login from Russia
+(RU) on web01" / "root from 203.0.113.9 (Moscow)") and pushed unless
+`--no-push`. Its details (kind, IP, user, country, city) are in the
+`geo_alerts` table and in the `geo` field of `GET /alerts`. One login is
+one event, so nothing resolves a geo alert on its own: `alerts ack`
+resolves it. Until then, more logins from the same IP to the same agent
+don't raise another, so a brute force from one address is one alert.
+Failed logins from abroad are constant on a server open to the internet,
+which is why `--failures` is off by default. Pushes share each agent's
+push budget (10 per minute).
+
+HTTP routes, for logged-in users: `GET/PUT /geo-alerts/settings`
+(`{"allowed_countries": ["SK"], "include_failures": false, "notify": true}`).
+Types are in `crates/protocol/src/geo.rs`.
 
 ### Push notifications
 

@@ -3,3 +3,5 @@ target/
 logs/
 /certs/
 /data/
+# MaxMind GeoIP database for geo alerts (licensed, download your own)
+GeoLite2-City.mmdb

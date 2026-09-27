@@ -6,7 +6,7 @@ use std::str::FromStr;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use protocol::{AlertRecord, AlertSeverity};
+use protocol::{AlertRecord, AlertSeverity, GeoAlertInfo};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
@@ -28,6 +28,13 @@ struct AlertRow {
     resolved_at: Option<String>,
     acknowledged_at: Option<String>,
     acknowledged_by: Option<String>,
+    // From `geo_alerts`; all NULL unless it's a geo alert.
+    geo_kind: Option<String>,
+    geo_ip: Option<String>,
+    geo_user: Option<String>,
+    geo_country_code: Option<String>,
+    geo_country_name: Option<String>,
+    geo_city: Option<String>,
 }
 
 impl TryFrom<AlertRow> for AlertRecord {
@@ -46,6 +53,17 @@ impl TryFrom<AlertRow> for AlertRecord {
             resolved_at: row.resolved_at,
             acknowledged_at: row.acknowledged_at,
             acknowledged_by: row.acknowledged_by,
+            geo: match (row.geo_kind, row.geo_ip, row.geo_user) {
+                (Some(kind), Some(ip), Some(user)) => Some(GeoAlertInfo {
+                    kind,
+                    ip,
+                    user,
+                    country_code: row.geo_country_code,
+                    country_name: row.geo_country_name,
+                    city: row.geo_city,
+                }),
+                _ => None,
+            },
         })
     }
 }
@@ -73,8 +91,12 @@ pub async fn list(
 
     let rows: Vec<AlertRow> = sqlx::query_as(
         "SELECT a.id, a.rule_id, a.agent_id, g.hostname, a.severity, a.title, a.message,
-                a.triggered_at, a.resolved_at, a.acknowledged_at, a.acknowledged_by
+                a.triggered_at, a.resolved_at, a.acknowledged_at, a.acknowledged_by,
+                ga.kind AS geo_kind, ga.ip AS geo_ip, ga.user AS geo_user,
+                ga.country_code AS geo_country_code, ga.country_name AS geo_country_name,
+                ga.city AS geo_city
          FROM alerts a LEFT JOIN agents g ON g.id = a.agent_id
+         LEFT JOIN geo_alerts ga ON ga.alert_id = a.id
          WHERE (?1 IS NULL OR a.agent_id = ?1) AND (?2 = 0 OR a.resolved_at IS NULL)
          ORDER BY a.id DESC LIMIT ?3",
     )
@@ -93,14 +115,19 @@ pub async fn list(
 }
 
 /// Marks an alert as seen. Acknowledging it again keeps the first
-/// acknowledgement.
+/// acknowledgement. A geo alert is about a single login, so nothing else
+/// resolves it: acknowledging does.
 pub async fn acknowledge(
     State(pool): State<SqlitePool>,
     Extension(user): Extension<AuthedUser>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let result = sqlx::query(
-        "UPDATE alerts SET acknowledged_at = datetime('now'), acknowledged_by = ?
+        "UPDATE alerts SET acknowledged_at = datetime('now'), acknowledged_by = ?,
+             resolved_at = CASE
+                 WHEN resolved_at IS NULL
+                      AND EXISTS (SELECT 1 FROM geo_alerts WHERE alert_id = alerts.id)
+                 THEN datetime('now') ELSE resolved_at END
          WHERE id = ? AND acknowledged_at IS NULL",
     )
     .bind(&user.username)

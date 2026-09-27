@@ -4,6 +4,7 @@ mod alerts;
 mod auth;
 mod auth_events;
 mod conn_limit;
+mod geo_alerts;
 mod metrics;
 mod notify;
 mod pam_notifications;
@@ -12,6 +13,8 @@ mod rate_limit;
 mod retention;
 mod routes;
 mod users;
+
+pub(crate) use rate_limit::RateLimiter;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

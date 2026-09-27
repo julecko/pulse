@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbConfig;
 use crate::db::retention::RetentionConfig;
+use crate::geoip::GeoIpConfig;
 use crate::push::PushConfig;
 use crate::web::WebConfig;
 
@@ -14,4 +15,5 @@ pub struct ServerConfig {
     pub db: DbConfig,
     pub retention: RetentionConfig,
     pub push: PushConfig,
+    pub geoip: GeoIpConfig,
 }

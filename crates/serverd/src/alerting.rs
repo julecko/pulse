@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use protocol::{AlertMetric, AlertOperator, AlertSeverity, Metrics};
 use sqlx::SqlitePool;
 
+use crate::geo_alerts::GeoAlerts;
 use crate::push::{Push, PushMessage};
 
 /// Longest mount point shown in an alert message.
@@ -28,6 +29,8 @@ const MAX_DETAIL_CHARS: usize = 64;
 
 pub struct Alerting {
     push: Push,
+    /// Alerts on SSH logins from countries that aren't allowed.
+    geo: GeoAlerts,
     /// (rule, agent) -> when its condition started holding.
     holding_since: Mutex<HashMap<(i64, i64), Instant>>,
 }
@@ -45,11 +48,16 @@ struct RuleRow {
 }
 
 impl Alerting {
-    pub fn new(push: Push) -> Arc<Self> {
+    pub fn new(push: Push, geo: GeoAlerts) -> Arc<Self> {
         Arc::new(Self {
             push,
+            geo,
             holding_since: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub fn geo(&self) -> &GeoAlerts {
+        &self.geo
     }
 
     /// Also used for plain notifications (see `web::notify`).

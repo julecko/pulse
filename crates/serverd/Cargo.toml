@@ -14,6 +14,7 @@ axum = "0.8.9"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.22"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+maxminddb = "0.32.0"
 password-hash = { version = "0.5", features = ["getrandom"] }
 protocol = { path = "../protocol" }
 pulse-shared = { version = "1.0.0", path = "../pulse-shared", features = ["password"] }
