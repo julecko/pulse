@@ -130,6 +130,18 @@ async fn main() {
     let _ = tokio::join!(auth_events, metrics, pairing);
 }
 
+/// Longest a whole request may take (connect, TLS, sending, response).
+/// Without it a stalled connection would hang the pairing, metrics or PAM
+/// event task until the agent restarts; with it the request fails and the
+/// task carries on with its next tick.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest a TCP connect may take; the OS default can be minutes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an idle pooled connection is kept for reuse. The server closes
+/// idle connections after 10s, so drop them before that rather than race
+/// its close.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// HTTPS client that always verifies the server's cert: against `ca_cert`
 /// alone if set (pinned, e.g. a self-signed server cert), else against the
 /// built-in public CA roots. Without verification, anyone on the network
@@ -137,7 +149,10 @@ async fn main() {
 /// Pinning keeps a cert any public CA issued for `server_addr` (say, after
 /// a DNS hijack) from being accepted too.
 fn http_client(cfg: &AgentConfig) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT);
     if let Some(path) = &cfg.ca_cert {
         let pem =
             std::fs::read(path).map_err(|e| format!("reading ca_cert {}: {e}", path.display()))?;
