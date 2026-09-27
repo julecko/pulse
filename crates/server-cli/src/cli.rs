@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use protocol::{AlertMetric, AlertOperator, AlertSeverity, MAX_RETENTION_DAYS, RetentionData};
+use protocol::{
+    AlertMetric, AlertOperator, AlertSeverity, AuthEventKind, MAX_RETENTION_DAYS, RetentionData,
+};
 
 #[derive(Parser)]
 #[command(name = "pulse-server-cli", about = "Admin CLI for the Pulse server")]
@@ -96,6 +98,12 @@ pub enum AgentsCommand {
     Remove { id: i64 },
     /// Show an agent's most recent PAM events (logins, sudo, failed auth)
     Events { id: i64 },
+    /// Choose which of an agent's PAM events are pushed to every registered
+    /// device (none by default; they're stored either way)
+    PamNotify {
+        #[command(subcommand)]
+        command: PamNotifyCommand,
+    },
     /// Show an agent's most recent metrics snapshots
     Metrics {
         id: i64,
@@ -103,6 +111,24 @@ pub enum AgentsCommand {
         #[arg(long, default_value_t = 10)]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+pub enum PamNotifyCommand {
+    /// Show every agent's pushed PAM events
+    List,
+    /// Show one agent's pushed PAM events
+    Show { id: i64 },
+    /// Push these PAM events of agent ID, replacing its current choice:
+    /// session_open (logins, sudo/su sessions), session_close (logouts),
+    /// auth_failure (failed passwords)
+    Set {
+        id: i64,
+        #[arg(required = true)]
+        kinds: Vec<AuthEventKind>,
+    },
+    /// Stop pushing agent ID's PAM events
+    Off { id: i64 },
 }
 
 #[derive(Subcommand)]

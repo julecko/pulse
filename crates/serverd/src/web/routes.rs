@@ -19,7 +19,8 @@ use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
 use super::{
-    agents, alert_rules, alerts, auth, auth_events, metrics, notify, push_devices, retention, users,
+    agents, alert_rules, alerts, auth, auth_events, metrics, notify, pam_notifications,
+    push_devices, retention, users,
 };
 use crate::alerting::Alerting;
 use crate::db::retention::Retention;
@@ -57,6 +58,9 @@ pub fn router(
             ),
         );
 
+    // One budget per agent for everything it pushes: `notify` and PAM
+    // events its push settings pick.
+    let notify_limiter = RateLimiter::new("notify", limits.notifications_per_agent_per_minute);
     let agent = Router::new()
         .route("/agents/me", get(agents::me))
         .route(
@@ -75,11 +79,9 @@ pub fn router(
         )
         .route(
             "/agents/me/notify",
-            per_agent(
-                post(notify::send),
-                RateLimiter::new("notify", limits.notifications_per_agent_per_minute),
-            ),
+            per_agent(post(notify::send), notify_limiter.clone()),
         )
+        .layer(Extension(notify::NotifyLimiter(notify_limiter)))
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_agent,
@@ -98,6 +100,11 @@ pub fn router(
         .route("/agents/{id}/unrevoke", post(agents::unrevoke))
         .route("/agents/{id}", delete(agents::remove))
         .route("/agents/{id}/auth-events", get(auth_events::list))
+        .route("/agents/pam-notifications", get(pam_notifications::list))
+        .route(
+            "/agents/{id}/pam-notifications",
+            get(pam_notifications::get).put(pam_notifications::set),
+        )
         .route("/agents/{id}/metrics", get(metrics::list))
         .route(
             "/alert-rules",

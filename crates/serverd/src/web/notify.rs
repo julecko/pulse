@@ -11,8 +11,16 @@ use protocol::Notification;
 use sqlx::SqlitePool;
 
 use super::auth::AuthedAgent;
+use super::rate_limit::RateLimiter;
 use crate::alerting::Alerting;
 use crate::push::PushMessage;
+
+/// Pushes per agent (see
+/// [`super::rate_limit::RateLimitConfig::notifications_per_agent_per_minute`]),
+/// shared by this route and pushed PAM events (see
+/// [`super::auth_events`]); `None` when disabled.
+#[derive(Clone)]
+pub struct NotifyLimiter(pub Option<Arc<RateLimiter<i64>>>);
 
 /// Pushes the notification in the background. `202` with how many devices
 /// it's going to; `503` if push isn't configured. The title is always the

@@ -1,7 +1,9 @@
 use protocol::{
-    AgentSummary, AuthEventRecord, MetricsRecord, PairingStatus, SetPairingRequest,
-    escape_for_display as esc,
+    AgentSummary, AuthEventKind, AuthEventRecord, MetricsRecord, PairingStatus, PamNotifications,
+    SetPairingRequest, SetPamNotifications, escape_for_display as esc,
 };
+
+use super::alerts::{json, send};
 
 pub async fn list(client: &reqwest::Client, base: &str) -> Result<(), String> {
     let agents: Vec<AgentSummary> = client
@@ -264,4 +266,72 @@ fn print_pairing(status: &PairingStatus) {
     if status.open {
         println!("new agents can send pairing requests; approve them with `agents approve <id>`");
     }
+}
+
+fn pam_kinds(settings: &PamNotifications) -> String {
+    if settings.kinds.is_empty() {
+        return "off".to_string();
+    }
+    settings
+        .kinds
+        .iter()
+        .map(|k| k.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Every agent's PAM push settings.
+pub async fn pam_notify_list(client: &reqwest::Client, base: &str) -> Result<(), String> {
+    let all: Vec<PamNotifications> =
+        json(send(client.get(format!("{base}/agents/pam-notifications"))).await?).await?;
+    if all.is_empty() {
+        println!("no agents");
+        return Ok(());
+    }
+    println!("{:<4} {:<20} {:<}", "ID", "HOSTNAME", "PUSHED PAM EVENTS");
+    for settings in all {
+        println!(
+            "{:<4} {:<20} {:<}",
+            settings.agent_id,
+            esc(&settings.hostname),
+            pam_kinds(&settings)
+        );
+    }
+    Ok(())
+}
+
+pub async fn pam_notify_show(client: &reqwest::Client, base: &str, id: i64) -> Result<(), String> {
+    let settings: PamNotifications =
+        json(send(client.get(format!("{base}/agents/{id}/pam-notifications"))).await?).await?;
+    print_pam_notify(&settings);
+    Ok(())
+}
+
+/// Replaces agent `id`'s pushed PAM event kinds; empty turns them off.
+pub async fn pam_notify_set(
+    client: &reqwest::Client,
+    base: &str,
+    id: i64,
+    kinds: Vec<AuthEventKind>,
+) -> Result<(), String> {
+    let settings: PamNotifications = json(
+        send(
+            client
+                .put(format!("{base}/agents/{id}/pam-notifications"))
+                .json(&SetPamNotifications { kinds }),
+        )
+        .await?,
+    )
+    .await?;
+    print_pam_notify(&settings);
+    Ok(())
+}
+
+fn print_pam_notify(settings: &PamNotifications) {
+    println!(
+        "agent {} ({}): pushed PAM events: {}",
+        settings.agent_id,
+        esc(&settings.hostname),
+        pam_kinds(settings)
+    );
 }

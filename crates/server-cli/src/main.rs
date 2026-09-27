@@ -11,7 +11,7 @@ mod session;
 use clap::Parser;
 use cli::{
     AgentsCommand, AlertsCommand, Cli, Command, DevicesCommand, OnOff, PairingCommand,
-    RetentionCommand, RulesCommand, UsersCommand,
+    PamNotifyCommand, RetentionCommand, RulesCommand, UsersCommand,
 };
 use reqwest::header::HeaderMap;
 use session::Session;
@@ -121,6 +121,17 @@ async fn run_agents(
         AgentsCommand::Events { id } => commands::agents::events(client, base, id).await,
         AgentsCommand::Metrics { id, limit } => {
             commands::agents::metrics(client, base, id, limit).await
+        }
+        AgentsCommand::PamNotify { command } => {
+            use commands::agents as a;
+            match command {
+                PamNotifyCommand::List => a::pam_notify_list(client, base).await,
+                PamNotifyCommand::Show { id } => a::pam_notify_show(client, base, id).await,
+                PamNotifyCommand::Set { id, kinds } => {
+                    a::pam_notify_set(client, base, id, kinds).await
+                }
+                PamNotifyCommand::Off { id } => a::pam_notify_set(client, base, id, vec![]).await,
+            }
         }
     }
 }

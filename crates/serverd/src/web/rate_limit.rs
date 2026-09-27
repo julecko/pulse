@@ -64,9 +64,11 @@ pub struct RateLimitConfig {
     /// `POST /agents/me/auth-events` per agent per minute: one per PAM
     /// event, so generous enough for a host under SSH brute force.
     pub auth_events_per_agent_per_minute: u32,
-    /// `POST /agents/me/notify` per agent per minute: plain push
-    /// notifications from `pulse-agent-cli notify`, so a script (or a
-    /// stolen agent secret) can't flood everyone's phone.
+    /// Pushes per agent per minute: `POST /agents/me/notify` (plain
+    /// notifications from `pulse-agent-cli notify`) plus PAM events the
+    /// agent's push settings pick, so a script, an SSH brute force or a
+    /// stolen agent secret can't flood everyone's phone. PAM events over the
+    /// limit are still stored, just not pushed.
     pub notifications_per_agent_per_minute: u32,
 }
 

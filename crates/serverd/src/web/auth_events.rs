@@ -1,14 +1,22 @@
-//! PAM auth events (sessions, failed auth) forwarded by agents.
+//! PAM auth events (sessions, failed auth) forwarded by agents, and pushed
+//! to every registered device for the kinds the agent's PAM push settings
+//! pick (see [`super::pam_notifications`]).
 
 use std::borrow::Cow;
+use std::sync::Arc;
+use std::time::Instant;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use protocol::{AuthEvent, AuthEventRecord};
+use protocol::{AuthEvent, AuthEventKind, AuthEventRecord};
 use sqlx::SqlitePool;
 
 use super::auth::AuthedAgent;
+use super::notify::NotifyLimiter;
+use super::rate_limit::RateLimiter;
+use crate::alerting::Alerting;
+use crate::push::PushMessage;
 
 /// Rows returned by [`list`].
 const LIST_LIMIT: i64 = 100;
@@ -31,11 +39,19 @@ fn truncate(s: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{}…", &s[..end]))
 }
 
-/// Stores one event for the calling agent. Behind
+/// Longest user or host name shown in a push. They can come from an
+/// attacker (the username typed at a failed SSH login), so they're also
+/// escaped (see [`protocol::escape_for_display`]).
+const MAX_PUSH_FIELD_CHARS: usize = 64;
+
+/// Stores one event for the calling agent, then pushes it if the agent's
+/// settings ask for that kind (see [`push_event`]). Behind
 /// [`super::auth::require_agent`], so `agent_id` always comes from the token.
 pub async fn ingest(
     State(pool): State<SqlitePool>,
     Extension(agent): Extension<AuthedAgent>,
+    Extension(alerting): Extension<Arc<Alerting>>,
+    Extension(NotifyLimiter(limiter)): Extension<NotifyLimiter>,
     Json(event): Json<AuthEvent>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     sqlx::query(
@@ -60,7 +76,95 @@ pub async fn ingest(
         "stored auth event"
     );
 
+    push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
+
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Pushes a stored event if the agent's settings pick its kind, push is
+/// configured, and the agent is within its push budget (shared with
+/// `POST /agents/me/notify`). Never fails the ingest: the event is stored
+/// either way.
+async fn push_event(
+    pool: &SqlitePool,
+    alerting: &Alerting,
+    limiter: Option<&RateLimiter<i64>>,
+    agent_id: i64,
+    event: &AuthEvent,
+) {
+    if !alerting.push().is_enabled() {
+        return;
+    }
+    let hostname: Option<String> = match sqlx::query_scalar(
+        "SELECT a.hostname FROM agents a
+         JOIN agent_pam_notifications n ON n.agent_id = a.id
+         WHERE a.id = ? AND n.kind = ?",
+    )
+    .bind(agent_id)
+    .bind(event.kind.as_str())
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(hostname) => hostname,
+        Err(err) => {
+            tracing::warn!(%err, agent_id, "PAM event not pushed: loading push settings failed");
+            return;
+        }
+    };
+    // Not a kind this agent pushes.
+    let Some(hostname) = hostname else {
+        return;
+    };
+    if let Some(limiter) = limiter
+        && limiter.check(agent_id, Instant::now()).is_err()
+    {
+        tracing::warn!(
+            agent_id,
+            "PAM event not pushed: agent over its push limit (event stored)"
+        );
+        return;
+    }
+
+    let (title, body) = push_text(&hostname, event);
+    alerting.push().notify_all(
+        pool,
+        PushMessage::plain(title, body, format!("PAM event from agent {agent_id}")),
+    );
+}
+
+/// `s` escaped and cut to [`MAX_PUSH_FIELD_CHARS`], for a push.
+fn push_field(s: &str) -> String {
+    let escaped = protocol::escape_for_display(s);
+    if escaped.chars().count() <= MAX_PUSH_FIELD_CHARS {
+        return escaped.into_owned();
+    }
+    let mut cut: String = escaped.chars().take(MAX_PUSH_FIELD_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// Title and body of the push for `event`, e.g. "web01: sshd login" /
+/// "root from 192.0.2.7".
+fn push_text(hostname: &str, event: &AuthEvent) -> (String, String) {
+    let service = push_field(&event.service);
+    let title = match event.kind {
+        AuthEventKind::SessionOpen => format!("{hostname}: {service} login"),
+        AuthEventKind::SessionClose => format!("{hostname}: {service} logout"),
+        AuthEventKind::AuthFailure => format!("{hostname}: failed {service} login"),
+    };
+
+    let mut body = push_field(&event.user);
+    if let Some(ruser) = event
+        .ruser
+        .as_deref()
+        .filter(|r| !r.is_empty() && *r != event.user)
+    {
+        body.push_str(&format!(" (by {})", push_field(ruser)));
+    }
+    if let Some(rhost) = event.rhost.as_deref().filter(|h| !h.is_empty()) {
+        body.push_str(&format!(" from {}", push_field(rhost)));
+    }
+    (title, body)
 }
 
 #[derive(sqlx::FromRow)]
@@ -111,6 +215,49 @@ pub async fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn event(kind: AuthEventKind, service: &str, user: &str, ruser: Option<&str>) -> AuthEvent {
+        AuthEvent {
+            kind,
+            service: service.to_string(),
+            user: user.to_string(),
+            ruser: ruser.map(str::to_string),
+            rhost: (service == "sshd").then(|| "192.0.2.7".to_string()),
+            tty: None,
+            occurred_at: 0,
+        }
+    }
+
+    #[test]
+    fn push_text_per_kind() {
+        let login = event(AuthEventKind::SessionOpen, "sshd", "root", None);
+        assert_eq!(
+            push_text("web01", &login),
+            ("web01: sshd login".into(), "root from 192.0.2.7".into())
+        );
+        let sudo = event(AuthEventKind::SessionOpen, "sudo", "root", Some("alice"));
+        assert_eq!(
+            push_text("web01", &sudo),
+            ("web01: sudo login".into(), "root (by alice)".into())
+        );
+        let logout = event(AuthEventKind::SessionClose, "sshd", "root", None);
+        assert_eq!(push_text("web01", &logout).0, "web01: sshd logout");
+        let failed = event(AuthEventKind::AuthFailure, "sshd", "admin", None);
+        assert_eq!(push_text("web01", &failed).0, "web01: failed sshd login");
+    }
+
+    #[test]
+    fn push_text_escapes_and_shortens_attacker_input() {
+        let user = format!("\x1b[2J{}", "a".repeat(100));
+        let (_, body) = push_text(
+            "web01",
+            &event(AuthEventKind::AuthFailure, "su", &user, None),
+        );
+        assert!(!body.contains('\x1b'));
+        assert!(body.starts_with("\\x1b[2J"));
+        assert_eq!(body.chars().count(), MAX_PUSH_FIELD_CHARS);
+        assert!(body.ends_with('…'));
+    }
 
     #[test]
     fn truncates_long_fields_on_a_char_boundary() {

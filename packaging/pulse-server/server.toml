@@ -39,8 +39,9 @@ pair_per_minute = 30
 metrics_per_agent_per_minute = 4
 # PAM events (logins, failed auth); generous for a host under SSH brute force.
 auth_events_per_agent_per_minute = 300
-# Plain push notifications from `pulse-agent-cli notify`, so a runaway script
-# can't flood everyone's phone.
+# Pushes per agent: `pulse-agent-cli notify` plus PAM events chosen with
+# `agents pam-notify`, so a runaway script or an SSH brute force can't flood
+# everyone's phone. PAM events over the limit are still stored.
 notifications_per_agent_per_minute = 10
 
 [web.connections]

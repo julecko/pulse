@@ -340,7 +340,7 @@ server config:
 | `POST /agents/pair` | 30 per minute | client IP (IPv6: per /64) | every request |
 | `POST /agents/me/metrics` | 4 per minute | agent | every request |
 | `POST /agents/me/auth-events` | 300 per minute | agent | every request |
-| `POST /agents/me/notify` | 10 per minute | agent | every request |
+| `POST /agents/me/notify` + pushed PAM events | 10 per minute | agent | every push |
 
 Over the limit, the server answers `429` with `Retry-After` (the agent waits
 that long; `pulse-server-cli` says how long). Five wrong passwords lock
@@ -465,6 +465,31 @@ auth [success=2 default=ignore] pam_unix.so nullok
 auth optional pam_exec.so quiet /usr/bin/pulse-agent-cli pam-hook
 auth requisite pam_deny.so
 ```
+
+**Push notifications**: events are only stored by default. To also get
+some of an agent's events on your phone, choose which kinds per agent on
+the server; nothing changes on the host:
+
+```sh
+pulse-server-cli -u alice agents pam-notify list                 # every agent's choice
+pulse-server-cli -u alice agents pam-notify set 3 session_open auth_failure
+pulse-server-cli -u alice agents pam-notify show 3
+pulse-server-cli -u alice agents pam-notify off 3
+```
+
+The kinds are `session_open` (logins, sudo/su sessions), `session_close`
+(logouts) and `auth_failure` (failed passwords); `set` replaces the agent's
+current choice. A login shows as "web01: sshd login" / "root from
+192.0.2.7", a failure as "web01: failed sshd login". Which services report
+at all is still decided by the PAM lines above, so leave `sudo` out of them
+if you don't want a push for every sudo. Pushes need push configured on the
+server (see [Push notifications](#push-notifications)) and share each
+agent's budget with `pulse-agent-cli notify` (10 per minute), so an SSH
+brute force can't flood your phone: past the budget, events are still
+stored, just not pushed. Usernames in failed logins are whatever the
+attacker typed; they're escaped and cut to 64 characters in the push.
+HTTP routes, for logged-in users: `GET /agents/pam-notifications`,
+`GET/PUT /agents/{id}/pam-notifications` (`{"kinds": ["session_open"]}`).
 
 Keep a root shell open while editing PAM files, so a mistake can't lock you
 out. The hook always exits 0 and the lines are `optional`, so a stopped or
@@ -629,7 +654,8 @@ must be approved, and push must be configured on the server; otherwise the
 command says why and exits 1. Like PAM events, the agent's socket only
 accepts root or the agent's own user, hence `sudo`. Titles are at most 100
 characters, messages at most 1000 (line breaks allowed, other control
-characters not). Each agent may send 10 per minute
+characters not). Each agent may push 10 per minute, shared with its pushed
+PAM events (see [Tracking logins](#tracking-logins-pam))
 (`[web.rate_limit] notifications_per_agent_per_minute`).
 
 HTTP routes, all for logged-in users: `GET/POST /alert-rules`,

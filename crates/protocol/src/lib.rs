@@ -11,7 +11,7 @@ pub use alerts::{
     AlertMetric, AlertOperator, AlertRecord, AlertRule, AlertSeverity, NewAlertRule, PushDevice,
     PushPlatform, RegisterPushDevice, UpdateAlertRule,
 };
-pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord};
+pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord, PamNotifications, SetPamNotifications};
 pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
 pub use notify::{
     LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,
