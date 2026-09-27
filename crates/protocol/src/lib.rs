@@ -1,4 +1,5 @@
 mod alerts;
+mod app_release;
 mod auth;
 mod geo;
 mod metrics;
@@ -12,6 +13,10 @@ mod user;
 pub use alerts::{
     AlertMetric, AlertOperator, AlertRecord, AlertRule, AlertSeverity, NewAlertRule, PushDevice,
     PushPlatform, RegisterPushDevice, UpdateAlertRule,
+};
+pub use app_release::{
+    AppRelease, MAX_APP_RELEASE_NOTES_LEN, MAX_APP_VERSION_CODE, MAX_APP_VERSION_NAME_LEN,
+    NewAppRelease, is_valid_app_version_name,
 };
 pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord, PamNotifications, SetPamNotifications};
 pub use geo::{

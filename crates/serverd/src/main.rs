@@ -1,4 +1,5 @@
 mod alerting;
+mod app_releases;
 mod config;
 mod credentials;
 mod db;
@@ -58,7 +59,20 @@ async fn main() {
     let alerting = alerting::Alerting::new(push, geo_alerts::GeoAlerts::new(geoip));
     tokio::spawn(offline::watch(pool.clone(), alerting.clone()));
 
-    if let Err(err) = web::serve(&cfg.web, pool, alerting, retention).await {
+    let app_releases = app_releases::AppReleases::open(&cfg.app_releases).unwrap_or_else(|err| {
+        tracing::error!("pulse-serverd: app releases: {err}");
+        std::process::exit(1);
+    });
+
+    if let Err(err) = web::serve(
+        &cfg.web,
+        pool,
+        alerting,
+        retention,
+        std::sync::Arc::new(app_releases),
+    )
+    .await
+    {
         tracing::error!("pulse-serverd: web server error: {err}");
         std::process::exit(1);
     }
