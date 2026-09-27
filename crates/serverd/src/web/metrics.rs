@@ -7,7 +7,10 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use protocol::{CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
+use protocol::{
+    CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord, NetworkInfo,
+    NetworkInterfaceInfo,
+};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
@@ -22,8 +25,11 @@ const MAX_LIST_LIMIT: i64 = 1000;
 /// compromised agent can't store arbitrary amounts of data per row.
 const MAX_DISKS: usize = 256;
 const MAX_CORES: usize = 1024;
+const MAX_NETWORK_INTERFACES: usize = 256;
 /// Longest disk name / mount point / file system name.
 const MAX_DISK_FIELD_LEN: usize = 1024;
+/// Longest network interface name (Linux allows 15 bytes).
+const MAX_INTERFACE_NAME_LEN: usize = 64;
 
 /// SQLite integers are signed 64-bit; byte counts never get near the limit,
 /// but saturate rather than wrap just in case.
@@ -52,6 +58,12 @@ pub async fn ingest(
         .transpose()
         .map_err(super::internal_error)?;
     let disks = serde_json::to_string(&m.disks).map_err(super::internal_error)?;
+    let interfaces = m
+        .network
+        .as_ref()
+        .map(|n| serde_json::to_string(&n.interfaces))
+        .transpose()
+        .map_err(super::internal_error)?;
 
     sqlx::query(
         "INSERT INTO metrics (
@@ -60,8 +72,9 @@ pub async fn ingest(
             memory_total_bytes, memory_used_bytes, memory_free_bytes,
             memory_swap_total_bytes, memory_swap_used_bytes,
             disks,
-            linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen, linux_uptime_secs
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen, linux_uptime_secs,
+            network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interfaces
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent.id)
     .bind(m.cpu.as_ref().map(|c| c.global_usage_percent))
@@ -77,6 +90,9 @@ pub async fn ingest(
     .bind(m.linux.as_ref().map(|l| l.load_avg_five))
     .bind(m.linux.as_ref().map(|l| l.load_avg_fifteen))
     .bind(m.linux.as_ref().map(|l| to_i64(l.uptime_secs)))
+    .bind(m.network.as_ref().map(|n| n.rx_bytes_per_sec))
+    .bind(m.network.as_ref().map(|n| n.tx_bytes_per_sec))
+    .bind(interfaces)
     .execute(&pool)
     .await
     .map_err(super::internal_error)?;
@@ -108,6 +124,34 @@ fn validate(m: &Metrics) -> Result<(), String> {
             "disk name, mount point and file system must be at most {MAX_DISK_FIELD_LEN} bytes"
         ));
     }
+    if let Some(net) = &m.network {
+        if net.interfaces.len() > MAX_NETWORK_INTERFACES {
+            return Err(format!(
+                "at most {MAX_NETWORK_INTERFACES} network interfaces"
+            ));
+        }
+        if net
+            .interfaces
+            .iter()
+            .any(|i| i.name.len() > MAX_INTERFACE_NAME_LEN)
+        {
+            return Err(format!(
+                "network interface names must be at most {MAX_INTERFACE_NAME_LEN} bytes"
+            ));
+        }
+        let rates = [net.rx_bytes_per_sec, net.tx_bytes_per_sec]
+            .into_iter()
+            .chain(
+                net.interfaces
+                    .iter()
+                    .flat_map(|i| [i.rx_bytes_per_sec, i.tx_bytes_per_sec]),
+            );
+        for rate in rates {
+            if !rate.is_finite() || rate < 0.0 {
+                return Err("network rates must be finite and not negative".to_string());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -128,6 +172,9 @@ struct MetricsRow {
     linux_load_avg_five: Option<f64>,
     linux_load_avg_fifteen: Option<f64>,
     linux_uptime_secs: Option<i64>,
+    network_rx_bytes_per_sec: Option<f64>,
+    network_tx_bytes_per_sec: Option<f64>,
+    network_interfaces: Option<String>,
 }
 
 impl From<MetricsRow> for MetricsRecord {
@@ -157,6 +204,15 @@ impl From<MetricsRow> for MetricsRecord {
             uptime_secs: row.linux_uptime_secs.unwrap_or(0) as u64,
         });
         let disks: Vec<DiskInfo> = serde_json::from_str(&row.disks).unwrap_or_default();
+        let network = row.network_rx_bytes_per_sec.map(|rx| NetworkInfo {
+            rx_bytes_per_sec: rx,
+            tx_bytes_per_sec: row.network_tx_bytes_per_sec.unwrap_or(0.0),
+            interfaces: row
+                .network_interfaces
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Vec<NetworkInterfaceInfo>>(json).ok())
+                .unwrap_or_default(),
+        });
 
         MetricsRecord {
             id: row.id,
@@ -166,6 +222,7 @@ impl From<MetricsRow> for MetricsRecord {
                 memory,
                 disks,
                 linux,
+                network,
             },
         }
     }
@@ -194,7 +251,8 @@ pub async fn list(
                 memory_total_bytes, memory_used_bytes, memory_free_bytes,
                 memory_swap_total_bytes, memory_swap_used_bytes,
                 disks,
-                linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen, linux_uptime_secs
+                linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen, linux_uptime_secs,
+                network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interfaces
          FROM metrics WHERE agent_id = ? ORDER BY id DESC LIMIT ?",
     )
     .bind(id)

@@ -6,6 +6,9 @@ pub struct Metrics {
     pub memory: Option<MemoryInfo>,
     pub disks: Vec<DiskInfo>,
     pub linux: Option<LinuxInfo>,
+    /// Absent from agents older than this field.
+    #[serde(default)]
+    pub network: Option<NetworkInfo>,
 }
 
 /// A stored snapshot, returned by `GET /agents/{id}/metrics`.
@@ -58,4 +61,29 @@ pub struct LinuxInfo {
     pub load_avg_five: f64,
     pub load_avg_fifteen: f64,
     pub uptime_secs: u64,
+}
+
+/// Network traffic the host is handling, averaged over the time since the
+/// previous snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NetworkInfo {
+    /// Received over all of `interfaces`, bytes per second.
+    pub rx_bytes_per_sec: f64,
+    /// Transmitted over all of `interfaces`, bytes per second.
+    pub tx_bytes_per_sec: f64,
+    /// Every interface except loopback and virtual ones (container veths,
+    /// bridges), whose traffic also crosses a real interface and would be
+    /// counted twice.
+    pub interfaces: Vec<NetworkInterfaceInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NetworkInterfaceInfo {
+    pub name: String,
+    pub rx_bytes_per_sec: f64,
+    pub tx_bytes_per_sec: f64,
+    /// Received since the interface came up (or its counters wrapped).
+    pub total_rx_bytes: u64,
+    /// Transmitted since the interface came up (or its counters wrapped).
+    pub total_tx_bytes: u64,
 }

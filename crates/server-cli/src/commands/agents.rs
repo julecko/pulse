@@ -166,8 +166,8 @@ pub async fn metrics(
     }
 
     println!(
-        "{:<20} {:>6} {:>19} {:>19} {:>16} {:<}",
-        "CREATED_AT", "CPU", "MEMORY", "SWAP", "LOAD 1/5/15", "DISKS (used/total)"
+        "{:<20} {:>6} {:>19} {:>19} {:>16} {:>21} {:<}",
+        "CREATED_AT", "CPU", "MEMORY", "SWAP", "LOAD 1/5/15", "NET RX/TX", "DISKS (used/total)"
     );
     for record in records {
         let m = record.metrics;
@@ -193,6 +193,10 @@ pub async fn metrics(
                 )
             })
             .unwrap_or_else(|| "-".to_string());
+        let net = m
+            .network
+            .map(|n| format!("{}/{}", rate(n.rx_bytes_per_sec), rate(n.tx_bytes_per_sec)))
+            .unwrap_or_else(|| "-".to_string());
         let disks = m
             .disks
             .iter()
@@ -209,12 +213,13 @@ pub async fn metrics(
             .join(", ");
 
         println!(
-            "{:<20} {:>6} {:>19} {:>19} {:>16} {}",
+            "{:<20} {:>6} {:>19} {:>19} {:>16} {:>21} {}",
             esc(&record.created_at),
             cpu,
             memory,
             swap,
             load,
+            net,
             disks
         );
     }
@@ -223,6 +228,18 @@ pub async fn metrics(
 
 fn gib(bytes: u64) -> String {
     format!("{:.1}G", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
+/// Bytes per second as `1.2M/s` (binary units, like [`gib`]).
+fn rate(bytes_per_sec: f64) -> String {
+    const UNITS: [&str; 4] = ["B", "K", "M", "G"];
+    let mut v = bytes_per_sec;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    format!("{v:.1}{}/s", UNITS[unit])
 }
 
 pub async fn pairing_status(client: &reqwest::Client, base: &str) -> Result<(), String> {

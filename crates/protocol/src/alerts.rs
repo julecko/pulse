@@ -25,10 +25,14 @@ pub enum AlertMetric {
     LoadAvgOne,
     LoadAvgFive,
     LoadAvgFifteen,
+    /// Network traffic received, megabits per second.
+    NetworkRxMbps,
+    /// Network traffic transmitted, megabits per second.
+    NetworkTxMbps,
 }
 
 impl AlertMetric {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::CpuUsagePercent,
         Self::MemoryUsedPercent,
         Self::SwapUsedPercent,
@@ -36,6 +40,8 @@ impl AlertMetric {
         Self::LoadAvgOne,
         Self::LoadAvgFive,
         Self::LoadAvgFifteen,
+        Self::NetworkRxMbps,
+        Self::NetworkTxMbps,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -47,6 +53,8 @@ impl AlertMetric {
             Self::LoadAvgOne => "load_avg_one",
             Self::LoadAvgFive => "load_avg_five",
             Self::LoadAvgFifteen => "load_avg_fifteen",
+            Self::NetworkRxMbps => "network_rx_mbps",
+            Self::NetworkTxMbps => "network_tx_mbps",
         }
     }
 }

@@ -23,7 +23,10 @@ pub use geo::{
     GeoAlertInfo, GeoAlertSettings, GeoDatabaseInfo, MAX_ALLOWED_COUNTRIES, SetGeoAlertSettings,
     is_valid_country_code,
 };
-pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
+pub use metrics::{
+    CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord, NetworkInfo,
+    NetworkInterfaceInfo,
+};
 pub use notify::{
     LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,
 };

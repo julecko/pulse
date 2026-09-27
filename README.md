@@ -1,7 +1,7 @@
 # Pulse
 
 Pulse is a lightweight host-monitoring system: a single **server** collects
-metrics (CPU, memory, disk, host info, ...) reported by one or more **agents**
+metrics (CPU, memory, disk, network traffic, host info, ...) reported by one or more **agents**
 running on the machines you want to watch. Agents send a metrics snapshot every
 `interval_secs` (agent config) over HTTPS, and the server stores them in
 SQLite for `[retention] metrics_days`. A mobile app to view everything
@@ -593,7 +593,9 @@ alerts_days` (default 90).
 Metrics a rule can watch: `cpu_usage_percent`, `memory_used_percent`,
 `swap_used_percent` (hosts without swap never match), `disk_used_percent`
 (the fullest disk; the alert names its mount point), `load_avg_one`,
-`load_avg_five`, `load_avg_fifteen`.
+`load_avg_five`, `load_avg_fifteen`, `network_rx_mbps` / `network_tx_mbps`
+(traffic received / sent in Mbit/s, over all real interfaces; loopback and
+container/VM interfaces such as `veth*`, `docker*`, `br-*` aren't counted).
 
 ```sh
 # every agent: CPU over 90% for 5 minutes, pushed as critical
