@@ -20,6 +20,9 @@ pub struct RetentionConfig {
     /// received them: `occurred_at` comes from the agent and can't be
     /// trusted). 0 = forever.
     pub auth_events_days: u32,
+    /// Days to keep resolved `alerts` (by `resolved_at`); active ones are
+    /// always kept. 0 = forever.
+    pub alerts_days: u32,
 }
 
 impl Default for RetentionConfig {
@@ -27,6 +30,7 @@ impl Default for RetentionConfig {
         Self {
             metrics_days: 14,
             auth_events_days: 14,
+            alerts_days: 90,
         }
     }
 }
@@ -35,6 +39,7 @@ pub async fn cleanup_periodically(pool: SqlitePool, cfg: RetentionConfig) {
     tracing::info!(
         metrics_days = cfg.metrics_days,
         auth_events_days = cfg.auth_events_days,
+        alerts_days = cfg.alerts_days,
         "retention cleanup enabled"
     );
 
@@ -44,6 +49,8 @@ pub async fn cleanup_periodically(pool: SqlitePool, cfg: RetentionConfig) {
         // Table/column names are fixed here, never user input.
         delete_older_than(&pool, "metrics", "created_at", cfg.metrics_days).await;
         delete_older_than(&pool, "auth_events", "created_at", cfg.auth_events_days).await;
+        // NULL (still active) never compares older, so only resolved go.
+        delete_older_than(&pool, "alerts", "resolved_at", cfg.alerts_days).await;
         delete_expired_sessions(&pool).await;
     }
 }

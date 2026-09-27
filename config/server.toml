@@ -72,3 +72,13 @@ max_per_ip = 64
 # hourly. 0 keeps rows forever.
 metrics_days = 14
 auth_events_days = 14
+# Resolved alerts, by when they resolved; active alerts are always kept.
+alerts_days = 90
+
+[push]
+# Firebase service account JSON key (Firebase console > Project settings >
+# Service accounts > Generate new private key), for pushing alerts from rules
+# with `notify` to the mobile app. Leave unset to disable pushes; alerts are
+# still recorded. Keep it readable only by the pulse-server group: it can
+# send pushes as your Firebase project.
+# fcm_service_account = "/etc/pulse-server/fcm-service-account.json"

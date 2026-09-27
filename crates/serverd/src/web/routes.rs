@@ -11,19 +11,27 @@
 
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
-use axum::routing::{MethodRouter, delete, get, post};
+use std::sync::Arc;
+
+use axum::routing::{MethodRouter, delete, get, patch, post};
 use axum::{Extension, Router};
 use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
-use super::{agents, auth, auth_events, metrics, users};
+use super::{agents, alert_rules, alerts, auth, auth_events, metrics, push_devices, users};
+use crate::alerting::Alerting;
 
 /// Largest request body accepted on any route (axum's default is 2 MiB).
 /// A metrics snapshot is ~1 KiB for a typical host and ~30 KiB for one with
 /// hundreds of cores and disks; everything else is far smaller.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
-pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig) -> Router {
+pub fn router(
+    pool: SqlitePool,
+    session_ttl_hours: u32,
+    limits: &RateLimitConfig,
+    alerting: Arc<Alerting>,
+) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route(
@@ -80,6 +88,21 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
         .route("/agents/{id}", delete(agents::remove))
         .route("/agents/{id}/auth-events", get(auth_events::list))
         .route("/agents/{id}/metrics", get(metrics::list))
+        .route(
+            "/alert-rules",
+            get(alert_rules::list).post(alert_rules::create),
+        )
+        .route(
+            "/alert-rules/{id}",
+            patch(alert_rules::update).delete(alert_rules::remove),
+        )
+        .route("/alerts", get(alerts::list))
+        .route("/alerts/{id}/acknowledge", post(alerts::acknowledge))
+        .route(
+            "/push-devices",
+            get(push_devices::list).post(push_devices::register),
+        )
+        .route("/push-devices/{id}", delete(push_devices::remove))
         .route_layer(middleware::from_fn_with_state(
             pool.clone(),
             auth::require_user,
@@ -90,6 +113,7 @@ pub fn router(pool: SqlitePool, session_ttl_hours: u32, limits: &RateLimitConfig
         .merge(agent)
         .merge(user)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(Extension(alerting))
         .with_state(pool)
 }
 

@@ -2,6 +2,8 @@
 //! per snapshot in the `metrics` table (old rows are pruned by
 //! `crate::db::retention`).
 
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -10,6 +12,7 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use super::auth::AuthedAgent;
+use crate::alerting::Alerting;
 
 const DEFAULT_LIST_LIMIT: i64 = 20;
 const MAX_LIST_LIMIT: i64 = 1000;
@@ -28,11 +31,13 @@ fn to_i64(v: u64) -> i64 {
     i64::try_from(v).unwrap_or(i64::MAX)
 }
 
-/// Stores one snapshot for the calling agent. Behind
+/// Stores one snapshot for the calling agent, then checks its alert rules
+/// against it (see [`crate::alerting`]). Behind
 /// [`super::auth::require_agent`], so `agent_id` always comes from the token.
 pub async fn ingest(
     State(pool): State<SqlitePool>,
     Extension(agent): Extension<AuthedAgent>,
+    Extension(alerting): Extension<Arc<Alerting>>,
     Json(m): Json<Metrics>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if let Err(err) = validate(&m) {
@@ -77,6 +82,8 @@ pub async fn ingest(
     .map_err(super::internal_error)?;
 
     tracing::debug!(agent_id = agent.id, "stored metrics");
+
+    alerting.evaluate(&pool, agent.id, &m).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

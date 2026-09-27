@@ -1,6 +1,8 @@
+mod alerting;
 mod config;
 mod credentials;
 mod db;
+mod push;
 mod web;
 
 use config::ServerConfig;
@@ -44,7 +46,13 @@ async fn main() {
         cfg.retention.clone(),
     ));
 
-    if let Err(err) = web::serve(&cfg.web, pool).await {
+    let push = push::Push::from_config(&cfg.push).unwrap_or_else(|err| {
+        tracing::error!("pulse-serverd: push notifications: {err}");
+        std::process::exit(1);
+    });
+    let alerting = alerting::Alerting::new(push);
+
+    if let Err(err) = web::serve(&cfg.web, pool, alerting).await {
         tracing::error!("pulse-serverd: web server error: {err}");
         std::process::exit(1);
     }

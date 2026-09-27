@@ -1,9 +1,14 @@
+mod alerts;
 mod auth;
 mod metrics;
 mod pairing;
 mod text;
 mod user;
 
+pub use alerts::{
+    AlertMetric, AlertOperator, AlertRecord, AlertRule, AlertSeverity, NewAlertRule, PushDevice,
+    PushPlatform, RegisterPushDevice, UpdateAlertRule,
+};
 pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord};
 pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
 pub use pairing::{

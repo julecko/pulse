@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbConfig;
 use crate::db::retention::RetentionConfig;
+use crate::push::PushConfig;
 use crate::web::WebConfig;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -12,4 +13,5 @@ pub struct ServerConfig {
     pub web: WebConfig,
     pub db: DbConfig,
     pub retention: RetentionConfig,
+    pub push: PushConfig,
 }

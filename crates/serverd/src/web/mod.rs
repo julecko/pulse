@@ -1,8 +1,11 @@
 mod agents;
+mod alert_rules;
+mod alerts;
 mod auth;
 mod auth_events;
 mod conn_limit;
 mod metrics;
+mod push_devices;
 mod rate_limit;
 mod routes;
 mod users;
@@ -61,7 +64,11 @@ pub enum WebError {
     Serve(SocketAddr, std::io::Error),
 }
 
-pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
+pub async fn serve(
+    cfg: &WebConfig,
+    pool: SqlitePool,
+    alerting: Arc<crate::alerting::Alerting>,
+) -> Result<(), WebError> {
     let cert = cfg.tls.resolved_cert();
     let key = cfg.tls.resolved_key();
 
@@ -85,7 +92,7 @@ pub async fn serve(cfg: &WebConfig, pool: SqlitePool) -> Result<(), WebError> {
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT);
 
-    let router = routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit).layer(
+    let router = routes::router(pool, cfg.session_ttl_hours, &cfg.rate_limit, alerting).layer(
         TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT),
     );
     server

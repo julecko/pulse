@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use protocol::{AlertMetric, AlertOperator, AlertSeverity};
 
 #[derive(Parser)]
 #[command(name = "pulse-server-cli", about = "Admin CLI for the Pulse server")]
@@ -17,7 +18,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub ca_cert: Option<PathBuf>,
 
-    /// User to log in as for `agents` commands (prompted for if omitted).
+    /// User to log in as for `agents`, `rules`, `alerts` and `devices`
+    /// commands (prompted for if omitted).
     /// The password is always prompted for without echo, or read from
     /// stdin when piped.
     #[arg(long, short = 'u', global = true)]
@@ -35,6 +37,23 @@ pub enum Command {
     Agents {
         #[command(subcommand)]
         command: AgentsCommand,
+    },
+    /// Manage alert rules: what fires an alert, and whether it's pushed
+    /// (logs in first; see --user)
+    Rules {
+        #[command(subcommand)]
+        command: RulesCommand,
+    },
+    /// View and acknowledge alerts fired by rules (logs in first)
+    Alerts {
+        #[command(subcommand)]
+        command: AlertsCommand,
+    },
+    /// Manage devices that get alert pushes; the mobile app registers them
+    /// (logs in first)
+    Devices {
+        #[command(subcommand)]
+        command: DevicesCommand,
     },
     /// Manage user accounts. Opens the server's SQLite file directly
     /// (no HTTP), so it must run on the server host with write access to it.
@@ -103,4 +122,115 @@ pub enum UsersCommand {
     Remove { username: String },
     /// List users and their active session counts
     List,
+}
+
+#[derive(Subcommand)]
+pub enum RulesCommand {
+    /// List all alert rules
+    List,
+    /// Add a rule, e.g. `rules add "CPU high" --metric cpu_usage_percent
+    /// --op gt --threshold 90 --for 5m --severity critical --notify`
+    Add {
+        /// Shown in each alert's title: "<name> on <hostname>"
+        name: String,
+        /// cpu_usage_percent, memory_used_percent, swap_used_percent,
+        /// disk_used_percent (fullest disk), load_avg_one, load_avg_five
+        /// or load_avg_fifteen
+        #[arg(long)]
+        metric: AlertMetric,
+        /// gt, ge, lt or le (or >, >=, <, <= quoted)
+        #[arg(long)]
+        op: AlertOperator,
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: f64,
+        /// Only watch this agent (default: every agent)
+        #[arg(long)]
+        agent: Option<i64>,
+        /// Fire only once the condition has held this long: 90s, 5m, 1h,
+        /// or plain seconds (default: at once)
+        #[arg(long = "for", value_parser = parse_duration, default_value = "0")]
+        duration_secs: u32,
+        /// info, warning or critical
+        #[arg(long, default_value = "warning")]
+        severity: AlertSeverity,
+        /// Push each alert it fires to every registered device
+        #[arg(long)]
+        notify: bool,
+    },
+    /// Start evaluating a rule again
+    Enable { id: i64 },
+    /// Stop evaluating a rule; its active alerts are resolved
+    Disable { id: i64 },
+    /// Turn pushing a rule's alerts on or off
+    Notify { id: i64, state: OnOff },
+    /// Delete a rule; its alerts are kept (resolved if still active)
+    Remove { id: i64 },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Subcommand)]
+pub enum AlertsCommand {
+    /// Show the most recent alerts, newest first
+    List {
+        /// Only alerts about this agent
+        #[arg(long)]
+        agent: Option<i64>,
+        /// Only alerts that haven't resolved yet
+        #[arg(long)]
+        active: bool,
+        /// How many to show
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Mark an alert as seen
+    Ack { id: i64 },
+}
+
+#[derive(Subcommand)]
+pub enum DevicesCommand {
+    /// List every user's registered devices
+    List,
+    /// Stop pushing alerts to a device
+    Remove { id: i64 },
+}
+
+/// `90s`, `5m`, `1h`, or plain seconds.
+fn parse_duration(s: &str) -> Result<u32, String> {
+    let (digits, unit) = match s.char_indices().last() {
+        Some((i, c)) if c.is_ascii_alphabetic() => (&s[..i], c),
+        _ => (s, 's'),
+    };
+    let n: u32 = digits
+        .parse()
+        .map_err(|_| format!("invalid duration {s:?} (e.g. 90s, 5m, 1h)"))?;
+    let factor = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        _ => return Err(format!("invalid duration unit in {s:?} (use s, m or h)")),
+    };
+    n.checked_mul(factor)
+        .ok_or_else(|| format!("duration {s:?} is too long"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_durations() {
+        assert_eq!(parse_duration("0"), Ok(0));
+        assert_eq!(parse_duration("90"), Ok(90));
+        assert_eq!(parse_duration("90s"), Ok(90));
+        assert_eq!(parse_duration("5m"), Ok(300));
+        assert_eq!(parse_duration("2h"), Ok(7200));
+        assert!(parse_duration("5d").is_err());
+        assert!(parse_duration("m").is_err());
+        assert!(parse_duration("").is_err());
+    }
 }

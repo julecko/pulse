@@ -1406,6 +1406,7 @@ name = "protocol"
 version = "1.0.0"
 dependencies = [
  "serde",
+ "serde_json",
  "sha2",
 ]
 
@@ -1839,10 +1840,13 @@ version = "1.0.1"
 dependencies = [
  "axum",
  "axum-server",
+ "base64",
  "hyper-util",
  "password-hash",
  "protocol",
  "pulse-shared",
+ "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

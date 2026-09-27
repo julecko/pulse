@@ -14,7 +14,7 @@ crates/
   agentd/        pulse-agentd: daemon on a monitored host, collects and sends metrics
   agent-cli/     pulse-agent-cli: agent identity (fingerprint, reset) + PAM hook
   serverd/       pulse-serverd: HTTPS API + SQLite storage, runs on the central server
-  server-cli/    pulse-server-cli: admin CLI (agents, users) for the server host
+  server-cli/    pulse-server-cli: admin CLI (agents, alert rules/alerts, users)
   protocol/      shared wire types (metrics payloads) used by agent and server
   pulse-shared/  shared config loading + logging setup used by all binaries,
                  plus agent identity (`agent` feature)
@@ -145,7 +145,8 @@ Any field not present in the file falls back to its default (see each
 `config.rs` for the defaults). Notable settings:
 
 - `config/server.toml`: `[web] bind/session_ttl_hours`, `[web.tls] cert/key`, `[db] path`,
-  `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever), `[log] ...`
+  `[retention] metrics_days/auth_events_days` (default 14, `0` = keep forever),
+  `[retention] alerts_days` (default 90), `[push] fcm_service_account`, `[log] ...`
 - `config/agent.toml`: `server_addr`, `interval_secs`, `pam_socket`, `[log] ...`
 
 Logging goes to stdout in debug builds by default (or `log.file` if set), and
@@ -484,8 +485,8 @@ argon2id hashes.
 
 Every server route except `/healthz`, `/auth/login` and the agents' own
 routes requires a logged-in user. That covers everything `pulse-server-cli
-agents` does (list, approve, revoke, remove, events, metrics). So each
-`agents` command logs in first:
+agents`, `rules`, `alerts` and `devices` do. So each of those commands logs
+in first:
 
 ```sh
 pulse-server-cli -u alice agents list          # prompts for the password, no echo
@@ -506,6 +507,89 @@ to user routes such as `GET /users/me`, and `POST /auth/logout` ends the
 session. Only a SHA-256 hash of each token is stored. Sessions expire after
 `[web] session_ttl_hours` (default 168, one week), and expired ones are
 cleaned up hourly.
+
+## Alerts
+
+The server can raise alerts from the metrics agents send. You set up
+**rules**; each time an agent sends a snapshot, the server checks every
+enabled rule that applies to it (its own, or one for all agents):
+
+- The condition holds: once it has held for the rule's `--for` duration
+  (every snapshot in that time matching), an **alert** is recorded, and if
+  the rule has `--notify`, it's **pushed** to every registered device of
+  every user. While the condition keeps holding, that alert stays active
+  and isn't raised again.
+- The condition stops holding: the alert is **resolved**. If it comes back,
+  that's a new alert (and a new push).
+
+Disabling or deleting a rule resolves its active alerts. Deleting it keeps
+its alerts as history. Resolved alerts are deleted after `[retention]
+alerts_days` (default 90).
+
+Metrics a rule can watch: `cpu_usage_percent`, `memory_used_percent`,
+`swap_used_percent` (hosts without swap never match), `disk_used_percent`
+(the fullest disk; the alert names its mount point), `load_avg_one`,
+`load_avg_five`, `load_avg_fifteen`.
+
+```sh
+# every agent: CPU over 90% for 5 minutes, pushed as critical
+pulse-server-cli -u alice rules add "CPU high" --metric cpu_usage_percent \
+    --op gt --threshold 90 --for 5m --severity critical --notify
+# only agent 3: fullest disk at 90% or more, recorded but not pushed
+pulse-server-cli -u alice rules add "Disk full" --metric disk_used_percent \
+    --op ge --threshold 90 --agent 3
+pulse-server-cli -u alice rules list
+pulse-server-cli -u alice rules disable <id>        # or enable
+pulse-server-cli -u alice rules notify <id> off     # or on
+pulse-server-cli -u alice rules remove <id>
+
+pulse-server-cli -u alice alerts list               # --active, --agent <id>, --limit N
+pulse-server-cli -u alice alerts ack <id>           # mark as seen
+```
+
+`--op` takes `gt`, `ge`, `lt`, `le` (or `'>'`, `'>='`, `'<'`, `'<='`
+quoted), and `--for` takes `90s`, `5m`, `1h` or plain seconds. How long a
+condition has held is kept in memory, so after a server restart a `--for`
+window starts over.
+
+### Push notifications
+
+Pushes go through Firebase Cloud Messaging (FCM). To turn them on, create a
+service account key in the Firebase console (Project settings > Service
+accounts > Generate new private key) and point the server at it:
+
+```sh
+sudo install -m 0640 -o root -g pulse-server key.json /etc/pulse-server/fcm-service-account.json
+# in /etc/pulse-server/server.toml:
+#   [push]
+#   fcm_service_account = "/etc/pulse-server/fcm-service-account.json"
+sudo systemctl restart pulse-serverd
+```
+
+Without it, alerts are still recorded, just not pushed. Treat the key like
+a password: it can send pushes as your Firebase project.
+
+The mobile app registers the device's FCM token as the logged-in user with
+`POST /push-devices` (`{"token": ..., "platform": "android", "name":
+"Pixel 8"}`); registering the same token again just refreshes it. Every
+registered device gets every pushed alert, whichever user registered it.
+Devices FCM reports as unregistered (app uninstalled, token expired) are
+removed on the next push. The push's `data` carries `alert_id`, `agent_id`
+and `severity`, for the app to open the alert.
+
+```sh
+pulse-server-cli -u alice devices list
+pulse-server-cli -u alice devices remove <id>     # stop pushing to it
+```
+
+What a push says (rule name, hostname, metric value) passes through Google.
+
+HTTP routes, all for logged-in users: `GET/POST /alert-rules`,
+`PATCH/DELETE /alert-rules/{id}` (`{"enabled": ..., "notify": ...}`),
+`GET /alerts` (`?agent_id=`, `?active=true`, `?limit=`),
+`POST /alerts/{id}/acknowledge`, `GET/POST /push-devices`,
+`DELETE /push-devices/{id}`. Request and response types are in
+`crates/protocol/src/alerts.rs`.
 
 ## Development
 
