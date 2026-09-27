@@ -1,0 +1,19 @@
+[package]
+name = "agent-cli"
+version = "1.0.1"
+edition = "2024"
+description = "CLI for the Pulse monitoring agent: identity and PAM hook"
+license-file = "../../LICENSE"
+
+[[bin]]
+name = "pulse-agent-cli"
+path = "src/main.rs"
+
+# No tokio or HTTP client: `pam-hook` runs on every login, so it stays a
+# small synchronous binary that starts fast.
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+protocol = { path = "../protocol" }
+pulse-shared = { path = "../pulse-shared", features = ["agent"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"

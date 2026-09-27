@@ -346,7 +346,7 @@ pub async fn approve(
                 StatusCode::CONFLICT,
                 format!(
                     "agent {id} is revoked and can't be approved (its secret may be compromised): \
-                     remove it with `agents remove {id}`, run `pulse-agentd reset-identity` on its host, \
+                     remove it with `agents remove {id}`, run `pulse-agent-cli reset-identity` on its host, \
                      then approve the new pairing request; or, if you're sure its secret never leaked, \
                      `agents unrevoke {id}`"
                 ),

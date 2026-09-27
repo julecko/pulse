@@ -19,7 +19,7 @@ pulse-agent is installed but not started. To finish setting it up:
   4. On the server (logs in as a Pulse user), open pairing if it's
      closed (it is by default), approve the agent, then close it again.
      Before approving, check that the fingerprint in `agents list` is the
-     one this host prints with `sudo /usr/lib/pulse-agent/pulse-agentd fingerprint`:
+     one this host prints with `sudo pulse-agent-cli fingerprint`:
        pulse-server-cli -u <user> agents pairing open --minutes 15
        pulse-server-cli -u <user> agents list
        pulse-server-cli -u <user> agents approve <id>
@@ -28,21 +28,22 @@ pulse-agent is installed but not started. To finish setting it up:
 MSG
 fi
 
-# pulse-agentd moved from /usr/bin to /usr/lib/pulse-agent (it's a daemon,
-# not a user command). PAM lines added for an older version still point at
-# the old path; they fail silently (they're `optional`), so login events
-# stop being reported. The package never edits PAM config itself, so just
-# say which files need updating.
-NEW=/usr/lib/pulse-agent/pulse-agentd
+# The PAM hook moved out of pulse-agentd (first /usr/bin, later
+# /usr/lib/pulse-agent) into pulse-agent-cli. PAM lines added for an older
+# version still call `pulse-agentd pam-hook`, which the daemon now rejects;
+# they fail silently (they're `optional`), so login events stop being
+# reported. The package never edits PAM config itself, so just say which
+# files need updating.
+NEW="/usr/bin/pulse-agent-cli pam-hook"
 if [ "$1" = "configure" ] && [ -n "$2" ]; then
-    STALE=$(grep -lE '/usr/s?bin/pulse-agentd' /etc/pam.d/* 2>/dev/null || true)
+    STALE=$(grep -lE 'pulse-agentd[[:space:]]+pam-hook' /etc/pam.d/* 2>/dev/null || true)
     if [ -n "$STALE" ]; then
         echo
-        echo "pulse-agent: WARNING: pulse-agentd is now $NEW, but these PAM files"
-        echo "still call it by its old path, so login events aren't reported:"
+        echo "pulse-agent: WARNING: the PAM hook is now \`$NEW\`, but these PAM"
+        echo "files still call \`pulse-agentd pam-hook\`, so login events aren't reported:"
         echo "$STALE" | sed 's/^/  /'
-        echo "Update the path in them, e.g.:"
-        echo "  sudo sed -i -E 's#/usr/s?bin/pulse-agentd#$NEW#' $(echo $STALE)"
+        echo "Update them, e.g.:"
+        echo "  sudo sed -i -E 's#[^[:space:]]*pulse-agentd[[:space:]]+pam-hook#$NEW#' $(echo $STALE)"
         echo
     fi
 fi

@@ -14,7 +14,7 @@ ca_cert = "certs/cert.pem"
 # How often to collect and send metrics, in seconds.
 interval_secs = 60
 
-# Unix socket `agent pam-hook` reports PAM events to. Leave unset:
+# Unix socket `pulse-agent-cli pam-hook` reports PAM events to. Leave unset:
 # ./data/agent.sock in debug, /run/pulse-agent/agent.sock in release.
 # pam_socket = "/run/pulse-agent/agent.sock"
 

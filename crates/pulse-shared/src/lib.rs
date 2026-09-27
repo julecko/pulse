@@ -1,3 +1,5 @@
+#[cfg(feature = "agent")]
+pub mod agent;
 pub mod config;
 pub mod db;
 mod logging;

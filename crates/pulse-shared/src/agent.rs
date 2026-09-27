@@ -1,14 +1,19 @@
-//! Local agent identity, generated once on first run and persisted:
+//! Agent state shared by `pulse-agentd` (the daemon) and `pulse-agent-cli`
+//! (`fingerprint`, `reset-identity`, `pam-hook`): the local identity and
+//! where the PAM event socket lives. Behind the `agent` feature, so the
+//! server binaries don't pull it in.
+//!
+//! The identity is generated once on first run and persisted:
 //! - `secret`: 32 random bytes (hex). Sent with every pairing poll to prove
 //!   this agent owns its fingerprint, and used as the bearer token once the
 //!   server approves it. Only its SHA-256 is stored on the server.
 //! - `fingerprint`: derived from the secret
 //!   ([`protocol::agent_fingerprint`]). Public; it's what an admin compares
-//!   before approving (`pulse-agentd fingerprint`).
+//!   before approving (`pulse-agent-cli fingerprint`).
 //!
 //! The file is mode 0600, readable only by the agent's own user.
 //!
-//! `pulse-agentd fingerprint` / `reset-identity` are run as root (via sudo),
+//! `pulse-agent-cli fingerprint` / `reset-identity` are run as root (via sudo),
 //! in a state dir the agent's user owns. So every path in it is treated as
 //! attacker-controlled: symlinks are never followed, and the temp file is
 //! freshly created under a random name, so a compromised agent user can't
@@ -18,12 +23,27 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use protocol::HostInfo;
 use serde::{Deserialize, Serialize};
-use sysinfo::System;
 
 /// Release default state dir; matches `StateDirectory=pulse-agent` in the systemd unit.
 pub const DEFAULT_STATE_DIR: &str = "/var/lib/pulse-agent";
+
+/// Release default socket dir; matches `RuntimeDirectory=pulse-agent` in the systemd unit.
+pub const DEFAULT_RUNTIME_DIR: &str = "/run/pulse-agent";
+
+/// The PAM event socket: `configured` (the agent config's `pam_socket`) if
+/// set, else `./data/agent.sock` in debug, `DEFAULT_RUNTIME_DIR/agent.sock`
+/// in release.
+pub fn pam_socket_path(configured: Option<&Path>) -> PathBuf {
+    configured.map(Path::to_path_buf).unwrap_or_else(|| {
+        let dir = if cfg!(debug_assertions) {
+            Path::new("data").to_path_buf()
+        } else {
+            PathBuf::from(DEFAULT_RUNTIME_DIR)
+        };
+        dir.join("agent.sock")
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -131,7 +151,7 @@ fn read_no_follow(path: &Path) -> std::io::Result<String> {
 }
 
 /// Atomically replaces the identity file (mode 0600). When written by root
-/// (`pulse-agentd reset-identity`), the file is handed to the state dir's
+/// (`pulse-agent-cli reset-identity`), the file is handed to the state dir's
 /// owner, the agent's user, so the daemon can read it. If the dir doesn't
 /// exist yet it's created root-owned, and systemd's `StateDirectory=` hands
 /// it and its contents to the agent's user on the daemon's first start.
@@ -171,16 +191,4 @@ fn save(identity: &Identity) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         format!("writing {}: {e}", path.display())
     })
-}
-
-/// Host-identifying info sent alongside the fingerprint when pairing. Not
-/// part of the periodic `Metrics` collection since it rarely changes.
-pub fn host_info() -> HostInfo {
-    HostInfo {
-        hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
-        os_name: System::name().unwrap_or_else(|| "unknown".to_string()),
-        os_version: System::long_os_version().unwrap_or_else(|| "unknown".to_string()),
-        kernel_version: System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
-        arch: System::cpu_arch(),
-    }
 }

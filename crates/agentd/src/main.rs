@@ -1,7 +1,5 @@
 mod collectors;
 mod config;
-mod identity;
-mod pam_hook;
 mod tasks;
 
 use config::AgentConfig;
@@ -12,47 +10,14 @@ use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() {
-    match std::env::args().nth(1).as_deref() {
-        // Invoked by pam_exec, not as the daemon: report one event and exit.
-        Some("pam-hook") => {
-            pam_hook::run();
-            return;
-        }
-        // For the admin to compare with `pulse-server-cli agents list`
-        // before approving.
-        Some("fingerprint") => {
-            match identity::load_or_create() {
-                Ok(identity) => println!("{}", identity.fingerprint),
-                Err(err) => {
-                    eprintln!("pulse-agentd: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-        Some("reset-identity") => {
-            match identity::reset() {
-                Ok(identity) => {
-                    println!("new fingerprint: {}", identity.fingerprint);
-                    println!(
-                        "restart the agent (sudo systemctl restart pulse-agentd); it pairs as a new \
-                         request, which the server accepts while pairing is open"
-                    );
-                }
-                Err(err) => {
-                    eprintln!("pulse-agentd: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-        Some(other) => {
-            eprintln!(
-                "pulse-agentd: unknown command {other:?} (expected none, `fingerprint`, `reset-identity` or `pam-hook`)"
-            );
-            std::process::exit(1);
-        }
-        None => {}
+    // The daemon takes no arguments; the one-shot commands (fingerprint,
+    // reset-identity, the PAM hook) live in pulse-agent-cli.
+    if let Some(arg) = std::env::args().nth(1) {
+        eprintln!(
+            "pulse-agentd: unexpected argument {arg:?}; it takes none (for `fingerprint`, \
+             `reset-identity` or `pam-hook`, use pulse-agent-cli)"
+        );
+        std::process::exit(1);
     }
 
     // See crates/serverd/src/main.rs for why this is needed: the shared
@@ -87,7 +52,7 @@ async fn main() {
         "agent starting"
     );
 
-    let identity = match identity::load_or_create() {
+    let identity = match pulse_shared::agent::load_or_create() {
         Ok(identity) => identity,
         Err(err) => {
             // Without a persisted identity every restart would pair as a

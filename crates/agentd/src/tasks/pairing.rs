@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use protocol::{PairRequest, PairResponse};
+use protocol::{HostInfo, PairRequest, PairResponse};
+use pulse_shared::agent::Identity;
 use reqwest::StatusCode;
+use sysinfo::System;
 use tokio::sync::watch;
-
-use crate::identity::{self, Identity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
@@ -41,7 +41,7 @@ pub async fn pairing_loop(
         tokio::time::sleep(delay).await;
         delay = PAIRING_POLL_INTERVAL;
 
-        let host = identity::host_info();
+        let host = host_info();
         let req = PairRequest {
             fingerprint: identity.fingerprint.clone(),
             secret: identity.secret.clone(),
@@ -117,7 +117,7 @@ pub async fn pairing_loop(
                 ),
                 Status::Revoked => tracing::warn!(
                     "agent access revoked; to pair again: `agents remove <id>` on the server, \
-                     then `pulse-agentd reset-identity` here and restart (or, if this agent's \
+                     then `pulse-agent-cli reset-identity` here and restart (or, if this agent's \
                      secret never leaked, `agents unrevoke <id>` on the server)"
                 ),
             }
@@ -132,6 +132,18 @@ pub async fn pairing_loop(
             *current = token;
             true
         });
+    }
+}
+
+/// Host-identifying info sent alongside the fingerprint when pairing. Not
+/// part of the periodic `Metrics` collection since it rarely changes.
+fn host_info() -> HostInfo {
+    HostInfo {
+        hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
+        os_name: System::name().unwrap_or_else(|| "unknown".to_string()),
+        os_version: System::long_os_version().unwrap_or_else(|| "unknown".to_string()),
+        kernel_version: System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
+        arch: System::cpu_arch(),
     }
 }
 

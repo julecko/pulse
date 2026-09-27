@@ -1,4 +1,4 @@
-//! `pulse-agentd pam-hook`: invoked by `pam_exec.so` for each PAM event, reports it
+//! `pulse-agent-cli pam-hook`: invoked by `pam_exec.so` for each PAM event, reports it
 //! to the running agent over its local Unix socket and exits.
 //!
 //! Must never get in the way of a login: it's silent, gives up after a short
@@ -11,13 +11,21 @@
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use protocol::{AuthEvent, AuthEventKind};
-
-use crate::config::AgentConfig;
+use serde::Deserialize;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Just `pam_socket` from the agent config; everything else in the file is
+/// ignored.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct AgentConfigSocket {
+    pam_socket: Option<PathBuf>,
+}
 
 pub fn run() {
     // Errors are deliberately swallowed, see module docs.
@@ -51,12 +59,15 @@ fn report() -> Option<()> {
     } else {
         pulse_shared::config::installed_path("agent")
     };
-    let cfg: AgentConfig = pulse_shared::config::load_from(&path).ok()?;
+    let cfg: AgentConfigSocket = pulse_shared::config::load_from(&path).ok()?;
 
     let mut line = serde_json::to_vec(&event).ok()?;
     line.push(b'\n');
 
-    let mut stream = UnixStream::connect(cfg.pam_socket_path()).ok()?;
+    let mut stream = UnixStream::connect(pulse_shared::agent::pam_socket_path(
+        cfg.pam_socket.as_deref(),
+    ))
+    .ok()?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok()?;
     stream.write_all(&line).ok()
 }

@@ -11,11 +11,13 @@ Workspace layout:
 
 ```
 crates/
-  agentd/        pulse-agentd: runs on a monitored host, collects metrics
+  agentd/        pulse-agentd: daemon on a monitored host, collects and sends metrics
+  agent-cli/     pulse-agent-cli: agent identity (fingerprint, reset) + PAM hook
   serverd/       pulse-serverd: HTTPS API + SQLite storage, runs on the central server
   server-cli/    pulse-server-cli: admin CLI (agents, users) for the server host
   protocol/      shared wire types (metrics payloads) used by agent and server
-  pulse-shared/  shared config loading + logging setup used by all binaries
+  pulse-shared/  shared config loading + logging setup used by all binaries,
+                 plus agent identity (`agent` feature)
 config/          default TOML configs used in debug builds (server.toml, agent.toml)
 packaging/       Debian packaging: systemd units, maintainer scripts, release configs
 certs/           TLS cert/key for the server (gitignored, generate locally)
@@ -162,7 +164,7 @@ Build both packages into `target/debian/` (needs
 | Package | Contains | Install on |
 |---|---|---|
 | `pulse-server_<ver>_<arch>.deb` | `pulse-serverd` (daemon), `pulse-server-cli` | the central server |
-| `pulse-agent_<ver>_<arch>.deb` | `pulse-agentd` (daemon + PAM hook) | every monitored host |
+| `pulse-agent_<ver>_<arch>.deb` | `pulse-agentd` (daemon), `pulse-agent-cli` (identity + PAM hook) | every monitored host |
 
 They require glibc 2.34+ (Ubuntu 22.04 / Debian 12 or newer). Both can be
 installed on the same host.
@@ -177,8 +179,8 @@ every user's `PATH`, in a private directory per package (like Postfix's
 `/usr/lib/postfix/sbin/`): `/usr/lib/pulse-server/pulse-serverd` and
 `/usr/lib/pulse-agent/pulse-agentd`. Manage them with `systemctl`
 (`systemctl status|restart pulse-serverd`, logs in `/var/log/pulse-*/`).
-The only command meant for users is `pulse-server-cli`, in `/usr/bin`; the
-admin tool `pulse-server-gen-cert` is in `/usr/sbin`.
+The commands meant for users are `pulse-server-cli` and `pulse-agent-cli`,
+in `/usr/bin`; the admin tool `pulse-server-gen-cert` is in `/usr/sbin`.
 
 Installing creates a system user for each daemon. The server's unit is
 enabled and started right away. The agent's is installed **disabled**, since
@@ -222,7 +224,7 @@ sudo pulse-server-cli users add alice
 pulse-server-cli -u alice agents pairing open --minutes 15
 pulse-server-cli -u alice agents list
 # check the fingerprint first: on the agent host,
-#   sudo /usr/lib/pulse-agent/pulse-agentd fingerprint
+#   sudo pulse-agent-cli fingerprint
 pulse-server-cli -u alice agents approve <id>
 pulse-server-cli -u alice agents pairing close
 pulse-server-cli -u alice agents metrics <id>  # latest snapshots (--limit N)
@@ -270,15 +272,15 @@ derives its public **fingerprint** from it; both are stored in
   leaked database, log or `agents list` output gives nothing away. The
   fingerprint is public.
 - Compare fingerprints before approving: `agents list` on the server,
-  `sudo /usr/lib/pulse-agent/pulse-agentd fingerprint` on the host.
+  `sudo pulse-agent-cli fingerprint` on the host.
 
 A revoked agent can't be approved again, since its secret may be
 compromised. The safe way to bring the host back is a new secret:
 
 ```sh
 pulse-server-cli -u alice agents remove <id>             # on the server
-sudo /usr/lib/pulse-agent/pulse-agentd reset-identity   # on the host: new secret
-sudo systemctl restart pulse-agentd                     # pairs as a new request
+sudo pulse-agent-cli reset-identity             # on the host: new secret
+sudo systemctl restart pulse-agentd             # pairs as a new request
 ```
 
 If you revoked it by mistake and are sure its secret never leaked, you can
@@ -403,7 +405,7 @@ system users are left in place, as Debian policy recommends.
 ## Tracking logins (PAM)
 
 The agent can report SSH logins, `sudo`/`su` sessions and failed password
-attempts. PAM calls `pulse-agentd pam-hook` through `pam_exec.so`. The hook writes
+attempts. PAM calls `pulse-agent-cli pam-hook` through `pam_exec.so`. The hook writes
 the event to the agent's local Unix socket (`pam_socket`: `data/agent.sock`
 in debug, `/run/pulse-agent/agent.sock` in release) and exits. The agent then
 forwards events to the server with its bearer token (its secret)
@@ -418,12 +420,12 @@ the event is dropped.
 
 Neither the package nor anything else edits PAM config automatically. Add
 these lines by hand (paths assume the `pulse-agent` package, which installs
-`/usr/lib/pulse-agent/pulse-agentd`):
+`/usr/bin/pulse-agent-cli`):
 
 **Sessions**: add to `/etc/pam.d/sshd`, `/etc/pam.d/sudo`, `/etc/pam.d/su`:
 
 ```
-session optional pam_exec.so quiet /usr/lib/pulse-agent/pulse-agentd pam-hook
+session optional pam_exec.so quiet /usr/bin/pulse-agent-cli pam-hook
 ```
 
 **Failed authentication** (Debian/Ubuntu `/etc/pam.d/common-auth`): put the
@@ -432,7 +434,7 @@ so a successful login skips both:
 
 ```
 auth [success=2 default=ignore] pam_unix.so nullok
-auth optional pam_exec.so quiet /usr/lib/pulse-agent/pulse-agentd pam-hook
+auth optional pam_exec.so quiet /usr/bin/pulse-agent-cli pam-hook
 auth requisite pam_deny.so
 ```
 
@@ -446,6 +448,10 @@ Caveats:
 - Failed SSH **public-key** attempts are handled by sshd without going
   through PAM auth, so they aren't reported. Successful key logins are still
   reported as sessions.
+- Upgrading from a version where the hook was `pulse-agentd pam-hook`? The
+  daemon no longer takes it, so update those PAM lines to
+  `/usr/bin/pulse-agent-cli pam-hook`; the package lists the files that
+  still need it on upgrade.
 
 View an agent's events with `pulse-server-cli -u <user> agents events <id>`.
 

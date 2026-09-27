@@ -1,10 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pulse_shared::LogConfig;
 use serde::{Deserialize, Serialize};
-
-/// Release default socket dir; matches `RuntimeDirectory=pulse-agent` in the systemd unit.
-pub const DEFAULT_RUNTIME_DIR: &str = "/run/pulse-agent";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -19,22 +16,15 @@ pub struct AgentConfig {
     /// private CA's cert). The server's cert is always verified; there is
     /// no way to turn that off.
     pub ca_cert: Option<PathBuf>,
-    /// Unix socket `pulse-agentd pam-hook` reports PAM events to. Unset:
-    /// `./data/agent.sock` in debug, `DEFAULT_RUNTIME_DIR/agent.sock` in release.
+    /// Unix socket `pulse-agent-cli pam-hook` reports PAM events to. Unset:
+    /// see [`pulse_shared::agent::pam_socket_path`].
     pub pam_socket: Option<PathBuf>,
     pub log: LogConfig,
 }
 
 impl AgentConfig {
     pub fn pam_socket_path(&self) -> PathBuf {
-        self.pam_socket.clone().unwrap_or_else(|| {
-            let dir = if cfg!(debug_assertions) {
-                Path::new("data").to_path_buf()
-            } else {
-                PathBuf::from(DEFAULT_RUNTIME_DIR)
-            };
-            dir.join("agent.sock")
-        })
+        pulse_shared::agent::pam_socket_path(self.pam_socket.as_deref())
     }
 }
 
