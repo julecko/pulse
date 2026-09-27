@@ -11,7 +11,7 @@
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use protocol::{AuthEvent, AuthEventKind};
@@ -59,17 +59,23 @@ fn report() -> Option<()> {
     } else {
         pulse_shared::config::installed_path("agent")
     };
-    let cfg: AgentConfigSocket = pulse_shared::config::load_from(&path).ok()?;
+    let socket = socket_path(&path).ok()?;
 
     let mut line = serde_json::to_vec(&event).ok()?;
     line.push(b'\n');
 
-    let mut stream = UnixStream::connect(pulse_shared::agent::pam_socket_path(
-        cfg.pam_socket.as_deref(),
-    ))
-    .ok()?;
+    let mut stream = UnixStream::connect(socket).ok()?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok()?;
     stream.write_all(&line).ok()
+}
+
+/// The agent's local socket, per the agent config at `config`. Shared with
+/// `notify`.
+pub(crate) fn socket_path(config: &Path) -> Result<PathBuf, pulse_shared::config::ConfigError> {
+    let cfg: AgentConfigSocket = pulse_shared::config::load_from(config)?;
+    Ok(pulse_shared::agent::pam_socket_path(
+        cfg.pam_socket.as_deref(),
+    ))
 }
 
 /// PAM env var, treating empty as unset (pam_exec exports unset items as "").

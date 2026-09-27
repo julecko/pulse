@@ -1,9 +1,15 @@
-//! Push notifications for alerts, via Firebase Cloud Messaging (FCM HTTP
-//! v1), to every device in `push_devices` (all users).
+//! Push notifications, via Firebase Cloud Messaging (FCM HTTP v1), to every
+//! device in `push_devices` (all users).
+//!
+//! Two kinds of push: alerts (see [`crate::alerting`]), which carry the
+//! alert's ids in `data` for the app, and plain notifications from
+//! `pulse-agent-cli notify` (see `web::notify`), which carry nothing but a
+//! title and body.
 //!
 //! Configured by `[push] fcm_service_account`: the service account JSON key
 //! from the Firebase console (Project settings > Service accounts). Unset:
-//! alerts are still recorded, just not pushed.
+//! alerts are still recorded, just not pushed, and plain notifications are
+//! refused.
 //!
 //! FCM wants an OAuth2 access token: we sign a JWT with the service
 //! account's RSA key (RS256), exchange it at the account's `token_uri`, and
@@ -41,17 +47,49 @@ pub struct PushConfig {
     pub fcm_api_url: Option<String>,
 }
 
-/// What an alert push says.
+/// What a push says.
 #[derive(Debug, Clone)]
-pub struct AlertPush {
-    pub alert_id: i64,
-    pub agent_id: i64,
-    pub severity: String,
+pub struct PushMessage {
     pub title: String,
-    pub message: String,
+    pub body: String,
+    /// FCM `data` for the app (values must be strings); empty for a plain
+    /// notification.
+    pub data: Vec<(&'static str, String)>,
+    /// What this push is, for logs, e.g. `alert 12`.
+    pub what: String,
 }
 
-/// Sends alert pushes; a no-op when `[push]` isn't configured.
+impl PushMessage {
+    pub fn alert(
+        alert_id: i64,
+        agent_id: i64,
+        severity: &str,
+        title: String,
+        message: String,
+    ) -> Self {
+        Self {
+            title,
+            body: message,
+            data: vec![
+                ("alert_id", alert_id.to_string()),
+                ("agent_id", agent_id.to_string()),
+                ("severity", severity.to_string()),
+            ],
+            what: format!("alert {alert_id}"),
+        }
+    }
+
+    pub fn plain(title: String, body: String, what: String) -> Self {
+        Self {
+            title,
+            body,
+            data: Vec::new(),
+            what,
+        }
+    }
+}
+
+/// Sends pushes; a no-op when `[push]` isn't configured.
 pub struct Push {
     fcm: Option<Arc<Fcm>>,
 }
@@ -88,18 +126,21 @@ impl Push {
         })
     }
 
-    /// Pushes `alert` to every registered device, in the background.
-    pub fn notify_all(&self, pool: &SqlitePool, alert: AlertPush) {
+    /// Whether `[push]` is configured, i.e. [`Self::notify_all`] sends
+    /// anything.
+    pub fn is_enabled(&self) -> bool {
+        self.fcm.is_some()
+    }
+
+    /// Pushes `msg` to every registered device, in the background.
+    pub fn notify_all(&self, pool: &SqlitePool, msg: PushMessage) {
         let Some(fcm) = &self.fcm else {
-            tracing::debug!(
-                alert_id = alert.alert_id,
-                "push not configured; not sending"
-            );
+            tracing::debug!(push = %msg.what, "push not configured; not sending");
             return;
         };
         let fcm = Arc::clone(fcm);
         let pool = pool.clone();
-        tokio::spawn(async move { fcm.send_to_all(&pool, &alert).await });
+        tokio::spawn(async move { fcm.send_to_all(&pool, &msg).await });
     }
 }
 
@@ -127,33 +168,33 @@ enum SendError {
 }
 
 impl Fcm {
-    async fn send_to_all(&self, pool: &SqlitePool, alert: &AlertPush) {
+    async fn send_to_all(&self, pool: &SqlitePool, msg: &PushMessage) {
         let devices: Vec<(i64, String)> = match sqlx::query_as("SELECT id, token FROM push_devices")
             .fetch_all(pool)
             .await
         {
             Ok(devices) => devices,
             Err(err) => {
-                tracing::warn!(%err, alert_id = alert.alert_id, "push: failed to load devices");
+                tracing::warn!(%err, push = %msg.what, "push: failed to load devices");
                 return;
             }
         };
         if devices.is_empty() {
-            tracing::debug!(alert_id = alert.alert_id, "push: no registered devices");
+            tracing::debug!(push = %msg.what, "push: no registered devices");
             return;
         }
 
         let access_token = match self.access_token().await {
             Ok(token) => token,
             Err(err) => {
-                tracing::warn!(%err, alert_id = alert.alert_id, "push: failed to get FCM access token");
+                tracing::warn!(%err, push = %msg.what, "push: failed to get FCM access token");
                 return;
             }
         };
 
         let (mut sent, mut failed) = (0, 0);
         for (device_id, token) in devices {
-            match self.send(&access_token, &token, alert).await {
+            match self.send(&access_token, &token, msg).await {
                 Ok(()) => sent += 1,
                 Err(SendError::Unregistered) => {
                     tracing::info!(
@@ -170,32 +211,33 @@ impl Fcm {
                 }
                 Err(SendError::Other(err)) => {
                     failed += 1;
-                    tracing::warn!(%err, device_id, alert_id = alert.alert_id, "push: send failed");
+                    tracing::warn!(%err, device_id, push = %msg.what, "push: send failed");
                 }
             }
         }
-        tracing::info!(alert_id = alert.alert_id, sent, failed, "push: alert sent");
+        tracing::info!(push = %msg.what, sent, failed, "push: sent");
     }
 
     async fn send(
         &self,
         access_token: &str,
         device_token: &str,
-        alert: &AlertPush,
+        msg: &PushMessage,
     ) -> Result<(), SendError> {
-        let body = serde_json::json!({
-            "message": {
-                "token": device_token,
-                "notification": { "title": alert.title, "body": alert.message },
-                // Data values must be strings.
-                "data": {
-                    "alert_id": alert.alert_id.to_string(),
-                    "agent_id": alert.agent_id.to_string(),
-                    "severity": alert.severity,
-                },
-                "android": { "priority": "high" },
-            }
+        let mut message = serde_json::json!({
+            "token": device_token,
+            "notification": { "title": msg.title, "body": msg.body },
+            "android": { "priority": "high" },
         });
+        if !msg.data.is_empty() {
+            let data: serde_json::Map<_, _> = msg
+                .data
+                .iter()
+                .map(|(k, v)| (k.to_string(), serde_json::Value::from(v.as_str())))
+                .collect();
+            message["data"] = data.into();
+        }
+        let body = serde_json::json!({ "message": message });
         let url = format!(
             "{}/v1/projects/{}/messages:send",
             self.api_url, self.account.project_id

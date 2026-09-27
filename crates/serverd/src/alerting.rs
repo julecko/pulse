@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use protocol::{AlertMetric, AlertOperator, AlertSeverity, Metrics};
 use sqlx::SqlitePool;
 
-use crate::push::{AlertPush, Push};
+use crate::push::{Push, PushMessage};
 
 /// Longest mount point shown in an alert message.
 const MAX_DETAIL_CHARS: usize = 64;
@@ -50,6 +50,11 @@ impl Alerting {
             push,
             holding_since: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Also used for plain notifications (see `web::notify`).
+    pub fn push(&self) -> &Push {
+        &self.push
     }
 
     /// Checks `agent_id`'s rules against the snapshot it just sent. Errors
@@ -162,13 +167,7 @@ impl Alerting {
                 if rule.notify {
                     self.push.notify_all(
                         pool,
-                        AlertPush {
-                            alert_id,
-                            agent_id,
-                            severity: severity.as_str().to_string(),
-                            title,
-                            message,
-                        },
+                        PushMessage::alert(alert_id, agent_id, severity.as_str(), title, message),
                     );
                 }
             }

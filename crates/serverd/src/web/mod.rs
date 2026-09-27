@@ -5,6 +5,7 @@ mod auth;
 mod auth_events;
 mod conn_limit;
 mod metrics;
+mod notify;
 mod push_devices;
 mod rate_limit;
 mod routes;

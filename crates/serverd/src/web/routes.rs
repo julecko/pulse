@@ -18,7 +18,7 @@ use axum::{Extension, Router};
 use sqlx::SqlitePool;
 
 use super::rate_limit::{self, RateLimitConfig, RateLimiter};
-use super::{agents, alert_rules, alerts, auth, auth_events, metrics, push_devices, users};
+use super::{agents, alert_rules, alerts, auth, auth_events, metrics, notify, push_devices, users};
 use crate::alerting::Alerting;
 
 /// Largest request body accepted on any route (axum's default is 2 MiB).
@@ -67,6 +67,13 @@ pub fn router(
             per_agent(
                 post(metrics::ingest),
                 RateLimiter::new("metrics", limits.metrics_per_agent_per_minute),
+            ),
+        )
+        .route(
+            "/agents/me/notify",
+            per_agent(
+                post(notify::send),
+                RateLimiter::new("notify", limits.notifications_per_agent_per_minute),
             ),
         )
         .route_layer(middleware::from_fn_with_state(

@@ -12,7 +12,8 @@ Workspace layout:
 ```
 crates/
   agentd/        pulse-agentd: daemon on a monitored host, collects and sends metrics
-  agent-cli/     pulse-agent-cli: agent identity (fingerprint, reset) + PAM hook
+  agent-cli/     pulse-agent-cli: agent identity (fingerprint, reset), notify,
+                 PAM hook
   serverd/       pulse-serverd: HTTPS API + SQLite storage, runs on the central server
   server-cli/    pulse-server-cli: admin CLI (agents, alert rules/alerts, users)
   protocol/      shared wire types (metrics payloads) used by agent and server
@@ -165,7 +166,7 @@ Build both packages into `target/debian/` (needs
 | Package | Contains | Install on |
 |---|---|---|
 | `pulse-server_<ver>_<arch>.deb` | `pulse-serverd` (daemon), `pulse-server-cli` | the central server |
-| `pulse-agent_<ver>_<arch>.deb` | `pulse-agentd` (daemon), `pulse-agent-cli` (identity + PAM hook) | every monitored host |
+| `pulse-agent_<ver>_<arch>.deb` | `pulse-agentd` (daemon), `pulse-agent-cli` (identity, notify, PAM hook) | every monitored host |
 
 They require glibc 2.34+ (Ubuntu 22.04 / Debian 12 or newer). Both can be
 installed on the same host.
@@ -314,6 +315,7 @@ server config:
 | `POST /agents/pair` | 30 per minute | client IP (IPv6: per /64) | every request |
 | `POST /agents/me/metrics` | 4 per minute | agent | every request |
 | `POST /agents/me/auth-events` | 300 per minute | agent | every request |
+| `POST /agents/me/notify` | 10 per minute | agent | every request |
 
 Over the limit, the server answers `429` with `Retry-After` (the agent waits
 that long; `pulse-server-cli` says how long). Five wrong passwords lock
@@ -583,6 +585,27 @@ pulse-server-cli -u alice devices remove <id>     # stop pushing to it
 ```
 
 What a push says (rule name, hostname, metric value) passes through Google.
+
+### Notifications from a host
+
+`pulse-agent-cli notify` sends a plain push notification from an agent's
+host, e.g. at the end of a backup script. It pops up on every registered
+device and that's all: nothing is stored, and the push carries no `data`.
+It's titled with the host's name, plus `--title` if given, so a host can't
+pass its notifications off as another's.
+
+```sh
+sudo pulse-agent-cli notify "Backup finished"            # title: web01
+sudo pulse-agent-cli notify -t Deploy "v2.1 is live"     # title: web01: Deploy
+```
+
+It goes through the running agent (which holds the token), so the agent
+must be approved, and push must be configured on the server; otherwise the
+command says why and exits 1. Like PAM events, the agent's socket only
+accepts root or the agent's own user, hence `sudo`. Titles are at most 100
+characters, messages at most 1000 (line breaks allowed, other control
+characters not). Each agent may send 10 per minute
+(`[web.rate_limit] notifications_per_agent_per_minute`).
 
 HTTP routes, all for logged-in users: `GET/POST /alert-rules`,
 `PATCH/DELETE /alert-rules/{id}` (`{"enabled": ..., "notify": ...}`),

@@ -1,6 +1,7 @@
 mod alerts;
 mod auth;
 mod metrics;
+mod notify;
 mod pairing;
 mod text;
 mod user;
@@ -11,6 +12,9 @@ pub use alerts::{
 };
 pub use auth::{AuthEvent, AuthEventKind, AuthEventRecord};
 pub use metrics::{CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord};
+pub use notify::{
+    LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,
+};
 pub use pairing::{
     AGENT_SECRET_LEN, AgentSummary, PairRequest, PairResponse, PairingStatus, SetPairingRequest,
     agent_fingerprint, is_valid_agent_secret,

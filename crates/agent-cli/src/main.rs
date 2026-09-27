@@ -1,7 +1,8 @@
-//! CLI for the Pulse agent host: show or reset the agent's identity, and
-//! the PAM hook `pam_exec` calls on every login. Everything that isn't the
+//! CLI for the Pulse agent host: show or reset the agent's identity, send a
+//! push notification, and the PAM hook `pam_exec` calls on every login. Everything that isn't the
 //! long-running daemon (`pulse-agentd`) lives here.
 
+mod notify;
 mod pam_hook;
 
 use clap::{Parser, Subcommand};
@@ -22,6 +23,17 @@ enum Command {
     /// Replace the agent's identity with a new one; it then pairs as a new
     /// request (after a revoke, or if its secret may have leaked)
     ResetIdentity,
+    /// Send a plain push notification to every device registered with the
+    /// server (the mobile app), titled with this host's name. Needs the
+    /// agent running and approved
+    Notify {
+        /// Shown after the hostname, e.g. "web01: Backup"
+        #[arg(short, long)]
+        title: Option<String>,
+        /// The notification text; multiple words are joined with spaces
+        #[arg(required = true)]
+        message: Vec<String>,
+    },
     /// Report one PAM event to the running agent. Called by pam_exec, not
     /// by hand; always silent and exits 0
     #[command(hide = true)]
@@ -45,6 +57,11 @@ fn main() {
                      request, which the server accepts while pairing is open"
                 );
             }
+            Err(err) => fail(&err),
+        },
+        Command::Notify { title, message } => match notify::run(title, message.join(" ")) {
+            Ok(details) if details.is_empty() => println!("notification sent"),
+            Ok(details) => println!("notification sent: {details}"),
             Err(err) => fail(&err),
         },
     }

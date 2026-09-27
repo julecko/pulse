@@ -31,7 +31,7 @@ pub const DEFAULT_STATE_DIR: &str = "/var/lib/pulse-agent";
 /// Release default socket dir; matches `RuntimeDirectory=pulse-agent` in the systemd unit.
 pub const DEFAULT_RUNTIME_DIR: &str = "/run/pulse-agent";
 
-/// The PAM event socket: `configured` (the agent config's `pam_socket`) if
+/// The agent's local socket (PAM events, notifications): `configured` (the agent config's `pam_socket`) if
 /// set, else `./data/agent.sock` in debug, `DEFAULT_RUNTIME_DIR/agent.sock`
 /// in release.
 pub fn pam_socket_path(configured: Option<&Path>) -> PathBuf {

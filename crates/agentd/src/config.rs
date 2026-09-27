@@ -16,7 +16,8 @@ pub struct AgentConfig {
     /// private CA's cert). The server's cert is always verified; there is
     /// no way to turn that off.
     pub ca_cert: Option<PathBuf>,
-    /// Unix socket `pulse-agent-cli pam-hook` reports PAM events to. Unset:
+    /// Unix socket `pulse-agent-cli pam-hook` reports PAM events to (and
+    /// `pulse-agent-cli notify` sends notifications through). Unset:
     /// see [`pulse_shared::agent::pam_socket_path`].
     pub pam_socket: Option<PathBuf>,
     pub log: LogConfig,

@@ -5,7 +5,7 @@ mod tasks;
 use config::AgentConfig;
 use std::time::Duration;
 
-use tasks::{auth_events_loop, pairing_loop, send_metrics_periodically};
+use tasks::{local_socket_loop, pairing_loop, send_metrics_periodically};
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -71,14 +71,16 @@ async fn main() {
     let pair_url = format!("https://{}/agents/pair", cfg.server_addr);
     let auth_events_url = format!("https://{}/agents/me/auth-events", cfg.server_addr);
     let metrics_url = format!("https://{}/agents/me/metrics", cfg.server_addr);
+    let notify_url = format!("https://{}/agents/me/notify", cfg.server_addr);
 
     // Tasks that call authenticated endpoints read the current token from
     // here; pairing_loop keeps it up to date.
     let (token_tx, token_rx) = watch::channel(None);
 
-    let auth_events = tokio::spawn(auth_events_loop(
+    let local_socket = tokio::spawn(local_socket_loop(
         client.clone(),
         auth_events_url,
+        notify_url,
         cfg.pam_socket_path(),
         token_rx.clone(),
     ));
@@ -92,7 +94,7 @@ async fn main() {
     // already stored — see tasks::pairing_loop for why.
     let pairing = tokio::spawn(pairing_loop(client, pair_url, identity, token_tx));
 
-    let _ = tokio::join!(auth_events, metrics, pairing);
+    let _ = tokio::join!(local_socket, metrics, pairing);
 }
 
 /// Longest a whole request may take (connect, TLS, sending, response).

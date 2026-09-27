@@ -37,6 +37,10 @@ use serde::{Deserialize, Serialize};
 /// Clients tracked per limiter before idle ones are pruned; bounds memory
 /// when many different IPs show up.
 const MAX_TRACKED_CLIENTS: usize = 10_000;
+/// How many clients are left after an eviction (see
+/// [`RateLimiter::evict_least_throttled`]); below the cap, so a flood
+/// doesn't trigger one on every request.
+const EVICT_DOWN_TO: usize = MAX_TRACKED_CLIENTS * 3 / 4;
 
 /// The server config's `[web.rate_limit]` section. `0` disables a limit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +64,10 @@ pub struct RateLimitConfig {
     /// `POST /agents/me/auth-events` per agent per minute: one per PAM
     /// event, so generous enough for a host under SSH brute force.
     pub auth_events_per_agent_per_minute: u32,
+    /// `POST /agents/me/notify` per agent per minute: plain push
+    /// notifications from `pulse-agent-cli notify`, so a script (or a
+    /// stolen agent secret) can't flood everyone's phone.
+    pub notifications_per_agent_per_minute: u32,
 }
 
 impl Default for RateLimitConfig {
@@ -70,6 +78,7 @@ impl Default for RateLimitConfig {
             pair_per_minute: 30,
             metrics_per_agent_per_minute: 4,
             auth_events_per_agent_per_minute: 300,
+            notifications_per_agent_per_minute: 10,
         }
     }
 }
@@ -91,7 +100,7 @@ struct Bucket {
     updated: Instant,
 }
 
-impl<K: Hash + Eq> RateLimiter<K> {
+impl<K: Hash + Eq + Clone> RateLimiter<K> {
     /// Counts every request. `None` when `per_minute` is 0 (disabled).
     pub fn new(name: &'static str, per_minute: u32) -> Option<Arc<Self>> {
         Self::build(name, per_minute, false)
@@ -138,11 +147,7 @@ impl<K: Hash + Eq> RateLimiter<K> {
             // those loses nothing.
             buckets.retain(|_, b| self.refilled(b, now) < self.capacity);
             if buckets.len() >= MAX_TRACKED_CLIENTS {
-                tracing::warn!(
-                    limiter = self.name,
-                    "rate limiter tracking too many clients; resetting"
-                );
-                buckets.clear();
+                self.evict_least_throttled(&mut buckets, now);
             }
         }
 
@@ -161,6 +166,29 @@ impl<K: Hash + Eq> RateLimiter<K> {
                 (1.0 - bucket.tokens) / self.refill_per_sec,
             ))
         }
+    }
+
+    /// Drops the buckets with the most tokens left until
+    /// [`EVICT_DOWN_TO`] remain. Clearing everything instead would let
+    /// someone with many addresses (or junk usernames) reset a throttled
+    /// client just by flooding the map; this way the most throttled
+    /// clients are the last to be forgotten, and flooding buckets (at most
+    /// one request short of full) always go first.
+    fn evict_least_throttled(&self, buckets: &mut HashMap<K, Bucket>, now: Instant) {
+        let mut by_tokens: Vec<(f64, K)> = buckets
+            .iter()
+            .map(|(key, b)| (self.refilled(b, now), key.clone()))
+            .collect();
+        by_tokens.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        let excess = buckets.len().saturating_sub(EVICT_DOWN_TO);
+        for (_, key) in by_tokens.into_iter().take(excess) {
+            buckets.remove(&key);
+        }
+        tracing::warn!(
+            limiter = self.name,
+            evicted = excess,
+            "rate limiter tracking too many clients; forgot the least throttled"
+        );
     }
 
     fn refilled(&self, bucket: &Bucket, now: Instant) -> f64 {
@@ -265,6 +293,27 @@ mod tests {
         limiter.refund(&ip);
         assert!(limiter.check(ip, t0).is_ok());
         assert!(limiter.check(ip, t0).is_err());
+    }
+
+    #[test]
+    fn flooding_the_map_does_not_reset_a_throttled_client() {
+        let limiter = RateLimiter::<String>::failures_only("test", 5).unwrap();
+        let t0 = Instant::now();
+        for _ in 0..5 {
+            assert!(limiter.check("victim".to_string(), t0).is_ok());
+        }
+        assert!(limiter.check("victim".to_string(), t0).is_err());
+
+        // One failure each for more junk names than the limiter tracks.
+        for i in 0..MAX_TRACKED_CLIENTS * 2 {
+            let _ = limiter.check(format!("junk{i}"), t0);
+        }
+
+        assert!(
+            limiter.check("victim".to_string(), t0).is_err(),
+            "victim's bucket must survive eviction"
+        );
+        assert!(limiter.buckets.lock().unwrap().len() <= MAX_TRACKED_CLIENTS);
     }
 
     #[test]
