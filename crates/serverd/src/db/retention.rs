@@ -16,7 +16,9 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 pub struct RetentionConfig {
     /// Days to keep `metrics` rows (by `created_at`). 0 = forever.
     pub metrics_days: u32,
-    /// Days to keep `auth_events` rows (by `occurred_at`). 0 = forever.
+    /// Days to keep `auth_events` rows (by `created_at`, when the server
+    /// received them: `occurred_at` comes from the agent and can't be
+    /// trusted). 0 = forever.
     pub auth_events_days: u32,
 }
 
@@ -41,7 +43,7 @@ pub async fn cleanup_periodically(pool: SqlitePool, cfg: RetentionConfig) {
         ticker.tick().await;
         // Table/column names are fixed here, never user input.
         delete_older_than(&pool, "metrics", "created_at", cfg.metrics_days).await;
-        delete_older_than(&pool, "auth_events", "occurred_at", cfg.auth_events_days).await;
+        delete_older_than(&pool, "auth_events", "created_at", cfg.auth_events_days).await;
         delete_expired_sessions(&pool).await;
     }
 }
