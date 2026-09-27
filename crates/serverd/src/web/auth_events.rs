@@ -1,7 +1,9 @@
 //! PAM auth events (sessions, failed auth) forwarded by agents, and pushed
 //! to every registered device for the kinds the agent's PAM push settings
 //! pick (see [`super::pam_notifications`]). SSH logins are also checked for
-//! geo alerts (see [`crate::geo_alerts`]).
+//! geo alerts (see [`crate::geo_alerts`]). A login from the same remote
+//! host within [`REPEAT_LOGIN_WINDOW_SECS`] of the previous one is stored
+//! but not pushed.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -45,6 +47,13 @@ fn truncate(s: &str) -> Cow<'_, str> {
 /// escaped (see [`protocol::escape_for_display`]).
 const MAX_PUSH_FIELD_CHARS: usize = 64;
 
+/// A login (session open) from the same remote host, to the same agent and
+/// service, within this many seconds of the previous one isn't pushed, so
+/// reconnecting over SSH doesn't send a push every time. Measured from the
+/// last login, so a steady stream of reconnects stays quiet until there's a
+/// gap this long.
+const REPEAT_LOGIN_WINDOW_SECS: i64 = 5 * 60;
+
 /// Stores one event for the calling agent, then pushes it if the agent's
 /// settings ask for that kind (see [`push_event`]). Behind
 /// [`super::auth::require_agent`], so `agent_id` always comes from the token.
@@ -57,6 +66,8 @@ pub async fn ingest(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let located = alerting.geo().locate(event.rhost.as_deref());
     let location = located.as_ref().map(|(_, location)| location);
+    // Checked before storing, so the event doesn't find itself.
+    let repeat = is_repeat_login(&pool, agent.id, &event).await;
 
     sqlx::query(
         "INSERT INTO auth_events (agent_id, kind, service, user, ruser, rhost, tty, occurred_at,
@@ -84,7 +95,14 @@ pub async fn ingest(
         "stored auth event"
     );
 
-    push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
+    if repeat {
+        tracing::debug!(
+            agent_id = agent.id,
+            "PAM login not pushed: same remote host logged in recently"
+        );
+    } else {
+        push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
+    }
     alerting
         .geo()
         .evaluate(
@@ -98,6 +116,42 @@ pub async fn ingest(
         .await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether `event` is a login from a remote host that already logged in to
+/// this agent's `service` within [`REPEAT_LOGIN_WINDOW_SECS`] before it (see
+/// [`ingest`]). Only session opens with a remote host count. A failed lookup
+/// counts as not a repeat, so the push still goes out.
+async fn is_repeat_login(pool: &SqlitePool, agent_id: i64, event: &AuthEvent) -> bool {
+    if event.kind != AuthEventKind::SessionOpen {
+        return false;
+    }
+    let Some(rhost) = event.rhost.as_deref().filter(|h| !h.is_empty()) else {
+        return false;
+    };
+    let result: Result<bool, _> = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM auth_events
+             WHERE agent_id = ? AND kind = ? AND service = ? AND rhost = ?
+               AND occurred_at >= datetime(?, 'unixepoch')
+               AND occurred_at <= datetime(?, 'unixepoch')
+         )",
+    )
+    .bind(agent_id)
+    .bind(AuthEventKind::SessionOpen.as_str())
+    .bind(truncate(&event.service))
+    .bind(truncate(rhost))
+    .bind(event.occurred_at - REPEAT_LOGIN_WINDOW_SECS)
+    .bind(event.occurred_at)
+    .fetch_one(pool)
+    .await;
+    match result {
+        Ok(repeat) => repeat,
+        Err(err) => {
+            tracing::warn!(%err, agent_id, "checking for a repeat login failed; pushing it");
+            false
+        }
+    }
 }
 
 /// Pushes a stored event if the agent's settings pick its kind, push is
@@ -284,6 +338,73 @@ mod tests {
         assert!(body.starts_with("\\x1b[2J"));
         assert_eq!(body.chars().count(), MAX_PUSH_FIELD_CHARS);
         assert!(body.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn repeat_login_within_window_from_same_host() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let agent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agents (hostname, public_ip, os_name, os_version, kernel_version, arch,
+                                 fingerprint, status)
+             VALUES ('web01', '192.0.2.1', 'linux', '1', '6', 'x86_64', 'fp', 'approved')
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let store = |event: AuthEvent| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO auth_events (agent_id, kind, service, user, rhost, occurred_at)
+                     VALUES (?, ?, ?, ?, ?, datetime(?, 'unixepoch'))",
+                )
+                .bind(agent_id)
+                .bind(event.kind.as_str())
+                .bind(&event.service)
+                .bind(&event.user)
+                .bind(&event.rhost)
+                .bind(event.occurred_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let login_at = |at: i64, rhost: &str| AuthEvent {
+            rhost: Some(rhost.to_string()),
+            occurred_at: at,
+            ..event(AuthEventKind::SessionOpen, "sshd", "root", None)
+        };
+
+        let t = 1_700_000_000;
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t, "192.0.2.7")).await);
+        store(login_at(t, "192.0.2.7")).await;
+
+        // Relogin within 5 minutes: quiet. Another host: pushed.
+        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.7")).await);
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.8")).await);
+        // The window runs from the last login, so it slides with each one.
+        store(login_at(t + 240, "192.0.2.7")).await;
+        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 500, "192.0.2.7")).await);
+        // More than 5 minutes after the last login: pushed again.
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 600, "192.0.2.7")).await);
+
+        // Only logins are deduplicated, and other kinds don't count as one.
+        let mut failed = login_at(t + 120, "192.0.2.7");
+        failed.kind = AuthEventKind::AuthFailure;
+        assert!(!is_repeat_login(&pool, agent_id, &failed).await);
+        store(AuthEvent {
+            occurred_at: t + 1000,
+            ..failed
+        })
+        .await;
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 1100, "192.0.2.7")).await);
     }
 
     #[test]
