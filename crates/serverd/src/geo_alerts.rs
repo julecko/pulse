@@ -14,9 +14,10 @@
 //! (so it can't be shown to be allowed), an alert is recorded: a normal
 //! `alerts` row (no rule) plus its details in `geo_alerts`, and pushed if
 //! the settings say so. A successful login is `critical`, a failure
-//! `warning`. At most one geo alert per agent, IP and kind is active at a
-//! time, so repeated logins (or a brute force) from one address raise one
-//! alert until it's acknowledged, which also resolves it.
+//! `warning`. Every successful login raises its own alert, since each one
+//! is someone actually on the host. Failures are deduplicated: at most one
+//! per agent and IP is active at a time, so a brute force from one address
+//! raises one alert until it's acknowledged, which also resolves it.
 
 use std::net::IpAddr;
 use std::path::Path;
@@ -118,16 +119,9 @@ impl GeoAlerts {
         }
 
         let ip_str = ip.to_string();
-        let active: Option<i64> = sqlx::query_scalar(
-            "SELECT a.id FROM alerts a JOIN geo_alerts g ON g.alert_id = a.id
-             WHERE a.agent_id = ? AND g.ip = ? AND g.kind = ? AND a.resolved_at IS NULL",
-        )
-        .bind(agent_id)
-        .bind(&ip_str)
-        .bind(event.kind.as_str())
-        .fetch_optional(pool)
-        .await?;
-        if active.is_some() {
+        if event.kind == AuthEventKind::AuthFailure
+            && has_active_failure_alert(pool, agent_id, &ip_str).await?
+        {
             return Ok(());
         }
 
@@ -197,6 +191,26 @@ impl GeoAlerts {
         );
         Ok(())
     }
+}
+
+/// Whether a failed-login geo alert for this agent and IP is still active
+/// (see the module docs).
+async fn has_active_failure_alert(
+    pool: &SqlitePool,
+    agent_id: i64,
+    ip: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM alerts a JOIN geo_alerts g ON g.alert_id = a.id
+             WHERE a.agent_id = ? AND g.ip = ? AND g.kind = ? AND a.resolved_at IS NULL
+         )",
+    )
+    .bind(agent_id)
+    .bind(ip)
+    .bind(AuthEventKind::AuthFailure.as_str())
+    .fetch_one(pool)
+    .await
 }
 
 /// The client's IP from `rhost`, if it's a public one.

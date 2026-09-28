@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agent-cli"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "clap",
  "protocol",
@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "protocol",
  "pulse-shared",
@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-shared"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "argon2",
  "getrandom 0.4.3",
@@ -1855,7 +1855,7 @@ dependencies = [
 
 [[package]]
 name = "server-cli"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "clap",
  "protocol",
@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "serverd"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "axum",
  "axum-server",
