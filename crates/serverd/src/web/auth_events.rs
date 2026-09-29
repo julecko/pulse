@@ -19,6 +19,7 @@ use super::auth::AuthedAgent;
 use super::notify::NotifyLimiter;
 use super::rate_limit::RateLimiter;
 use crate::alerting::Alerting;
+use crate::geoip::Location;
 use crate::push::PushMessage;
 
 /// Rows returned by [`list`].
@@ -101,7 +102,15 @@ pub async fn ingest(
             "PAM login not pushed: same remote host logged in recently"
         );
     } else {
-        push_event(&pool, &alerting, limiter.as_deref(), agent.id, &event).await;
+        push_event(
+            &pool,
+            &alerting,
+            limiter.as_deref(),
+            agent.id,
+            &event,
+            location,
+        )
+        .await;
     }
     alerting
         .geo()
@@ -156,14 +165,15 @@ async fn is_repeat_login(pool: &SqlitePool, agent_id: i64, event: &AuthEvent) ->
 
 /// Pushes a stored event if the agent's settings pick its kind, push is
 /// configured, and the agent is within its push budget (shared with
-/// `POST /agents/me/notify`). Never fails the ingest: the event is stored
-/// either way.
+/// `POST /agents/me/notify`). `location` is where `rhost` is, shown after
+/// it. Never fails the ingest: the event is stored either way.
 async fn push_event(
     pool: &SqlitePool,
     alerting: &Alerting,
     limiter: Option<&RateLimiter<i64>>,
     agent_id: i64,
     event: &AuthEvent,
+    location: Option<&Location>,
 ) {
     if !alerting.push().is_enabled() {
         return;
@@ -198,7 +208,7 @@ async fn push_event(
         return;
     }
 
-    let (title, body) = push_text(&hostname, event);
+    let (title, body) = push_text(&hostname, event, location);
     alerting.push().notify_all(
         pool,
         PushMessage::plain(title, body, format!("PAM event from agent {agent_id}")),
@@ -217,8 +227,8 @@ fn push_field(s: &str) -> String {
 }
 
 /// Title and body of the push for `event`, e.g. "web01: sshd login" /
-/// "root from 192.0.2.7".
-fn push_text(hostname: &str, event: &AuthEvent) -> (String, String) {
+/// "root from 192.0.2.7 (Bratislava, Slovakia)".
+fn push_text(hostname: &str, event: &AuthEvent, location: Option<&Location>) -> (String, String) {
     let service = push_field(&event.service);
     let title = match event.kind {
         AuthEventKind::SessionOpen => format!("{hostname}: {service} login"),
@@ -236,8 +246,25 @@ fn push_text(hostname: &str, event: &AuthEvent) -> (String, String) {
     }
     if let Some(rhost) = event.rhost.as_deref().filter(|h| !h.is_empty()) {
         body.push_str(&format!(" from {}", push_field(rhost)));
+        if let Some(place) = location.and_then(place_name) {
+            body.push_str(&format!(" ({place})"));
+        }
     }
     (title, body)
+}
+
+/// "Bratislava, Slovakia", or whichever parts the database knows.
+fn place_name(location: &Location) -> Option<String> {
+    let country = location
+        .country_name
+        .as_deref()
+        .or(location.country_code.as_deref());
+    let parts: Vec<&str> = [location.city.as_deref(), country]
+        .into_iter()
+        .flatten()
+        .filter(|p| !p.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 #[derive(sqlx::FromRow)]
@@ -313,18 +340,48 @@ mod tests {
     fn push_text_per_kind() {
         let login = event(AuthEventKind::SessionOpen, "sshd", "root", None);
         assert_eq!(
-            push_text("web01", &login),
+            push_text("web01", &login, None),
             ("web01: sshd login".into(), "root from 192.0.2.7".into())
         );
         let sudo = event(AuthEventKind::SessionOpen, "sudo", "root", Some("alice"));
         assert_eq!(
-            push_text("web01", &sudo),
+            push_text("web01", &sudo, None),
             ("web01: sudo login".into(), "root (by alice)".into())
         );
         let logout = event(AuthEventKind::SessionClose, "sshd", "root", None);
-        assert_eq!(push_text("web01", &logout).0, "web01: sshd logout");
+        assert_eq!(push_text("web01", &logout, None).0, "web01: sshd logout");
         let failed = event(AuthEventKind::AuthFailure, "sshd", "admin", None);
-        assert_eq!(push_text("web01", &failed).0, "web01: failed sshd login");
+        assert_eq!(
+            push_text("web01", &failed, None).0,
+            "web01: failed sshd login"
+        );
+    }
+
+    #[test]
+    fn push_text_shows_where_the_client_is() {
+        let login = event(AuthEventKind::SessionOpen, "sshd", "root", None);
+        let bratislava = Location {
+            country_code: Some("SK".into()),
+            country_name: Some("Slovakia".into()),
+            city: Some("Bratislava".into()),
+        };
+        assert_eq!(
+            push_text("web01", &login, Some(&bratislava)).1,
+            "root from 192.0.2.7 (Bratislava, Slovakia)"
+        );
+        let code_only = Location {
+            country_code: Some("SK".into()),
+            ..Location::default()
+        };
+        assert_eq!(
+            push_text("web01", &login, Some(&code_only)).1,
+            "root from 192.0.2.7 (SK)"
+        );
+        // Known IP, unknown place: nothing to add.
+        assert_eq!(
+            push_text("web01", &login, Some(&Location::default())).1,
+            "root from 192.0.2.7"
+        );
     }
 
     #[test]
@@ -333,6 +390,7 @@ mod tests {
         let (_, body) = push_text(
             "web01",
             &event(AuthEventKind::AuthFailure, "su", &user, None),
+            None,
         );
         assert!(!body.contains('\x1b'));
         assert!(body.starts_with("\\x1b[2J"));

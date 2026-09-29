@@ -710,11 +710,18 @@ A geo alert is a normal alert: `critical` for a successful login,
 `--no-push`. Its details (kind, IP, user, country, city) are in the
 `geo_alerts` table and in the `geo` field of `GET /alerts`. One login is
 one event, so nothing resolves a geo alert on its own: `alerts ack`
-resolves it. Until then, more logins from the same IP to the same agent
-don't raise another, so a brute force from one address is one alert.
-Failed logins from abroad are constant on a server open to the internet,
-which is why `--failures` is off by default. Pushes share each agent's
-push budget (10 per minute).
+resolves it. Every successful login from a country that isn't allowed
+raises its own alert and push, even from an IP that already has one.
+Failed logins are deduplicated: until the alert is acknowledged, more
+failures from the same IP to the same agent don't raise another, so a
+brute force from one address is one alert. Failed logins from abroad are
+constant on a server open to the internet, which is why `--failures` is
+off by default. Pushes share each agent's push budget (10 per minute).
+
+Login pushes from the PAM settings (see [Tracking logins](#tracking-logins-pam))
+also show where a public client IP is, e.g. "root from 203.0.113.9
+(Moscow, Russia)", when a database is loaded. The mobile app shows it in
+each host's auth log and can change these settings (Settings > Geo alerts).
 
 HTTP routes, for logged-in users: `GET/PUT /geo-alerts/settings`
 (`{"allowed_countries": ["SK"], "include_failures": false, "notify": true}`).
