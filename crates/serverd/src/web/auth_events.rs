@@ -9,10 +9,11 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use protocol::{AuthEvent, AuthEventKind, AuthEventRecord};
+use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use super::auth::AuthedAgent;
@@ -22,8 +23,10 @@ use crate::alerting::Alerting;
 use crate::geoip::Location;
 use crate::push::PushMessage;
 
-/// Rows returned by [`list`].
-const LIST_LIMIT: i64 = 100;
+/// Rows returned by [`list`] unless `?limit=` asks otherwise, and the most
+/// it may ask for.
+const DEFAULT_LIST_LIMIT: i64 = 100;
+const MAX_LIST_LIMIT: i64 = 500;
 
 /// Longest stored text field. Longer values (e.g. an absurd username in a
 /// failed SSH login) are truncated rather than rejected, so an attacker
@@ -300,19 +303,41 @@ impl From<AuthEventRow> for AuthEventRecord {
     }
 }
 
-/// Most recent events for one agent, newest first.
+#[derive(Deserialize)]
+pub struct ListQuery {
+    limit: Option<i64>,
+    /// Only events listed after this one: pass the last `id` of a page to
+    /// get the next (older) one.
+    before_id: Option<i64>,
+}
+
+/// Most recent events for one agent, newest first (by when they happened).
+/// `?limit=` defaults to 100, capped at 500; `?before_id=` pages back
+/// through older ones. A `before_id` that's gone (pruned, or another
+/// agent's) gives an empty page.
 pub async fn list(
     State(pool): State<SqlitePool>,
     Path(id): Path<i64>,
+    Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<AuthEventRecord>>, (StatusCode, String)> {
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    // Ordered by (occurred_at, id), so the cursor is that pair of the
+    // `before_id` row; `occurred_at` alone isn't unique.
     let rows: Vec<AuthEventRow> = sqlx::query_as(
         "SELECT id, kind, service, user, ruser, rhost, tty, occurred_at,
                 country_code, country_name, city
          FROM auth_events
-         WHERE agent_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?",
+         WHERE agent_id = ?1
+           AND (?2 IS NULL OR (occurred_at, id) < (
+                SELECT occurred_at, id FROM auth_events WHERE id = ?2 AND agent_id = ?1))
+         ORDER BY occurred_at DESC, id DESC LIMIT ?3",
     )
     .bind(id)
-    .bind(LIST_LIMIT)
+    .bind(query.before_id)
+    .bind(limit)
     .fetch_all(&pool)
     .await
     .map_err(super::internal_error)?;
@@ -463,6 +488,68 @@ mod tests {
         })
         .await;
         assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 1100, "192.0.2.7")).await);
+    }
+
+    #[tokio::test]
+    async fn pages_back_through_events_in_order() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let agent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agents (hostname, public_ip, os_name, os_version, kernel_version, arch,
+                                 fingerprint, status)
+             VALUES ('web01', '192.0.2.1', 'linux', '1', '6', 'x86_64', 'fp', 'approved')
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Inserted out of time order, with two at the same second, since the
+        // hook stamps the time and forwarding can be delayed.
+        for (user, at) in [("a", 100), ("b", 300), ("c", 200), ("d", 200), ("e", 400)] {
+            sqlx::query(
+                "INSERT INTO auth_events (agent_id, kind, service, user, occurred_at)
+                 VALUES (?, 'session_open', 'sshd', ?, datetime(?, 'unixepoch'))",
+            )
+            .bind(agent_id)
+            .bind(user)
+            .bind(1_700_000_000 + at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let page = |before_id: Option<i64>| {
+            let pool = pool.clone();
+            async move {
+                list(
+                    State(pool),
+                    Path(agent_id),
+                    Query(ListQuery {
+                        limit: Some(2),
+                        before_id,
+                    }),
+                )
+                .await
+                .unwrap()
+                .0
+            }
+        };
+        let users =
+            |events: &[AuthEventRecord]| events.iter().map(|e| e.user.clone()).collect::<Vec<_>>();
+
+        let first = page(None).await;
+        assert_eq!(users(&first), ["e", "b"]);
+        let second = page(Some(first[1].id)).await;
+        assert_eq!(users(&second), ["d", "c"]);
+        let third = page(Some(second[1].id)).await;
+        assert_eq!(users(&third), ["a"]);
+        assert!(page(Some(third[0].id)).await.is_empty());
+        // Unknown cursor: nothing, not the first page again.
+        assert!(page(Some(9999)).await.is_empty());
     }
 
     #[test]

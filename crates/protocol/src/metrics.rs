@@ -87,3 +87,46 @@ pub struct NetworkInterfaceInfo {
     /// Transmitted since the interface came up (or its counters wrapped).
     pub total_tx_bytes: u64,
 }
+
+/// Longest range `GET /agents/{id}/metrics/series` covers, in seconds (90
+/// days; retention usually keeps less).
+pub const MAX_SERIES_RANGE_SECS: i64 = 90 * 24 * 3600;
+/// Most points `GET /agents/{id}/metrics/series` returns.
+pub const MAX_SERIES_POINTS: i64 = 1000;
+
+/// An agent's metrics over a time range, averaged into equal buckets so a
+/// graph of any range is a few hundred points, not every snapshot.
+/// Returned by `GET /agents/{id}/metrics/series?range_secs=&points=`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MetricsSeries {
+    /// Unix seconds; the range is `[since, until)`.
+    pub since: i64,
+    pub until: i64,
+    /// Width of each point's bucket.
+    pub bucket_secs: i64,
+    /// Oldest first. Buckets without snapshots are left out, so a gap in
+    /// `at` is a time the agent wasn't reporting.
+    pub points: Vec<SeriesPoint>,
+}
+
+/// One bucket of a [`MetricsSeries`]: averages over its snapshots, plus the
+/// busiest moment for CPU. A field is `None` when no snapshot in the bucket
+/// reported it.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct SeriesPoint {
+    /// Unix seconds, start of the bucket.
+    pub at: i64,
+    /// Snapshots averaged into it.
+    pub samples: u32,
+    pub cpu_percent: Option<f32>,
+    pub cpu_max_percent: Option<f32>,
+    pub memory_percent: Option<f32>,
+    pub swap_percent: Option<f32>,
+    /// The fullest non-removable filesystem (any, if all are removable).
+    pub disk_percent: Option<f32>,
+    pub load_one: Option<f64>,
+    pub load_five: Option<f64>,
+    pub load_fifteen: Option<f64>,
+    pub net_rx_bytes_per_sec: Option<f64>,
+    pub net_tx_bytes_per_sec: Option<f64>,
+}

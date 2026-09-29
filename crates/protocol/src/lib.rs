@@ -24,8 +24,8 @@ pub use geo::{
     is_valid_country_code,
 };
 pub use metrics::{
-    CpuInfo, DiskInfo, HostInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord, NetworkInfo,
-    NetworkInterfaceInfo,
+    CpuInfo, DiskInfo, HostInfo, LinuxInfo, MAX_SERIES_POINTS, MAX_SERIES_RANGE_SECS, MemoryInfo,
+    Metrics, MetricsRecord, MetricsSeries, NetworkInfo, NetworkInterfaceInfo, SeriesPoint,
 };
 pub use notify::{
     LocalMessage, MAX_NOTIFICATION_MESSAGE_LEN, MAX_NOTIFICATION_TITLE_LEN, Notification,

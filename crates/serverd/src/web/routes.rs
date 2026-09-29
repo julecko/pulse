@@ -112,6 +112,7 @@ pub fn router(
             get(pam_notifications::get).put(pam_notifications::set),
         )
         .route("/agents/{id}/metrics", get(metrics::list))
+        .route("/agents/{id}/metrics/series", get(metrics::series))
         .route(
             "/alert-rules",
             get(alert_rules::list).post(alert_rules::create),

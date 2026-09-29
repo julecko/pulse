@@ -184,6 +184,23 @@ HTTP routes, for logged-in users: `GET /retention` and
 `PUT /retention/{data}` (`{"days": 30}`, or `{"days": null}` to reset).
 Types are in `crates/protocol/src/retention.rs`.
 
+### Reading metrics and auth events
+
+For logged-in users (the mobile app uses these):
+
+- `GET /agents/{id}/metrics?limit=100&before_id=...`: snapshots, newest
+  first (`limit` defaults to 20, at most 1000). Pass the last `id` of a
+  page as `before_id` to get the next, older page.
+- `GET /agents/{id}/auth-events?limit=100&before_id=...`: PAM events,
+  newest first (`limit` defaults to 100, at most 500), paged the same way.
+- `GET /agents/{id}/metrics/series?range_secs=86400&points=300`: the last
+  `range_secs` (at most 90 days) averaged into at most `points` (at most
+  1000) equal buckets, for graphs: CPU (average and peak), memory, swap,
+  fullest disk, load and network per bucket. Buckets without snapshots
+  are left out, so gaps show when the agent wasn't reporting.
+
+Types are in `crates/protocol/src/metrics.rs` and `crates/protocol/src/auth.rs`.
+
 ## Installing (Debian/Ubuntu packages)
 
 Build both packages into `target/debian/` (needs
