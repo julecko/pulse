@@ -8,8 +8,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use protocol::{
-    CpuInfo, DiskInfo, LinuxInfo, MemoryInfo, Metrics, MetricsRecord, NetworkInfo,
-    NetworkInterfaceInfo,
+    CpuInfo, DiskInfo, LinuxInfo, MAX_SERIES_POINTS, MAX_SERIES_RANGE_SECS, MemoryInfo, Metrics,
+    MetricsRecord, MetricsSeries, NetworkInfo, NetworkInterfaceInfo, SeriesPoint,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -231,10 +231,13 @@ impl From<MetricsRow> for MetricsRecord {
 #[derive(Deserialize)]
 pub struct ListQuery {
     limit: Option<i64>,
+    /// Only snapshots older than this one: pass the last `id` of a page to
+    /// get the next (older) one.
+    before_id: Option<i64>,
 }
 
 /// Most recent snapshots for one agent, newest first. `?limit=` defaults to
-/// 20, capped at 1000.
+/// 20, capped at 1000; `?before_id=` pages back through older ones.
 pub async fn list(
     State(pool): State<SqlitePool>,
     Path(id): Path<i64>,
@@ -253,13 +256,331 @@ pub async fn list(
                 disks,
                 linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen, linux_uptime_secs,
                 network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interfaces
-         FROM metrics WHERE agent_id = ? ORDER BY id DESC LIMIT ?",
+         FROM metrics WHERE agent_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
     )
     .bind(id)
+    .bind(query.before_id.unwrap_or(i64::MAX))
     .bind(limit)
     .fetch_all(&pool)
     .await
     .map_err(super::internal_error)?;
 
     Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+const DEFAULT_SERIES_RANGE_SECS: i64 = 24 * 3600;
+const DEFAULT_SERIES_POINTS: i64 = 300;
+
+#[derive(Deserialize)]
+pub struct SeriesQuery {
+    range_secs: Option<i64>,
+    points: Option<i64>,
+}
+
+/// The columns a series needs, one row per snapshot.
+#[derive(sqlx::FromRow)]
+struct SeriesRow {
+    at: i64,
+    cpu_global_usage_percent: Option<f32>,
+    memory_total_bytes: Option<i64>,
+    memory_used_bytes: Option<i64>,
+    memory_swap_total_bytes: Option<i64>,
+    memory_swap_used_bytes: Option<i64>,
+    disks: String,
+    linux_load_avg_one: Option<f64>,
+    linux_load_avg_five: Option<f64>,
+    linux_load_avg_fifteen: Option<f64>,
+    network_rx_bytes_per_sec: Option<f64>,
+    network_tx_bytes_per_sec: Option<f64>,
+}
+
+/// One agent's metrics over the last `?range_secs=` (default a day, at
+/// most [`MAX_SERIES_RANGE_SECS`]), averaged into at most `?points=`
+/// buckets (default 300, at most [`MAX_SERIES_POINTS`]); see
+/// [`MetricsSeries`].
+pub async fn series(
+    State(pool): State<SqlitePool>,
+    Path(id): Path<i64>,
+    Query(query): Query<SeriesQuery>,
+) -> Result<Json<MetricsSeries>, (StatusCode, String)> {
+    let range = query
+        .range_secs
+        .unwrap_or(DEFAULT_SERIES_RANGE_SECS)
+        .clamp(60, MAX_SERIES_RANGE_SECS);
+    let points = query
+        .points
+        .unwrap_or(DEFAULT_SERIES_POINTS)
+        .clamp(2, MAX_SERIES_POINTS);
+    // Rounded up, so `range` fits in `points` buckets.
+    let bucket_secs = (range + points - 1) / points;
+
+    let until: i64 = sqlx::query_scalar("SELECT CAST(strftime('%s', 'now') AS INTEGER)")
+        .fetch_one(&pool)
+        .await
+        .map_err(super::internal_error)?;
+    let since = until - range;
+
+    let rows: Vec<SeriesRow> = sqlx::query_as(
+        "SELECT CAST(strftime('%s', created_at) AS INTEGER) AS at,
+                cpu_global_usage_percent,
+                memory_total_bytes, memory_used_bytes,
+                memory_swap_total_bytes, memory_swap_used_bytes,
+                disks,
+                linux_load_avg_one, linux_load_avg_five, linux_load_avg_fifteen,
+                network_rx_bytes_per_sec, network_tx_bytes_per_sec
+         FROM metrics
+         WHERE agent_id = ? AND created_at >= datetime(?, 'unixepoch')
+         ORDER BY created_at, id",
+    )
+    .bind(id)
+    .bind(since)
+    .fetch_all(&pool)
+    .await
+    .map_err(super::internal_error)?;
+
+    Ok(Json(MetricsSeries {
+        since,
+        until,
+        bucket_secs,
+        points: bucket(rows, since, bucket_secs),
+    }))
+}
+
+/// Running averages of one bucket.
+#[derive(Default)]
+struct Bucket {
+    samples: u32,
+    cpu: Mean,
+    cpu_max: Option<f32>,
+    memory: Mean,
+    swap: Mean,
+    disk: Mean,
+    load_one: Mean,
+    load_five: Mean,
+    load_fifteen: Mean,
+    net_rx: Mean,
+    net_tx: Mean,
+}
+
+#[derive(Default)]
+struct Mean {
+    sum: f64,
+    count: u32,
+}
+
+impl Mean {
+    fn add(&mut self, v: Option<f64>) {
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            self.sum += v;
+            self.count += 1;
+        }
+    }
+
+    fn get(&self) -> Option<f64> {
+        (self.count > 0).then(|| self.sum / f64::from(self.count))
+    }
+}
+
+/// `used` as a percentage of `total`; `None` without a total.
+fn percent(used: Option<i64>, total: Option<i64>) -> Option<f64> {
+    let total = total.filter(|t| *t > 0)?;
+    Some(used.unwrap_or(0) as f64 * 100.0 / total as f64)
+}
+
+/// The fullest non-removable filesystem's used percentage (any, if all are
+/// removable), from the stored `disks` JSON.
+fn fullest_disk_percent(disks_json: &str) -> Option<f64> {
+    let disks: Vec<DiskInfo> = serde_json::from_str(disks_json).ok()?;
+    let sized = || disks.iter().filter(|d| d.total_bytes > 0);
+    let pick = if sized().any(|d| !d.removable) {
+        sized().filter(|d| !d.removable).collect::<Vec<_>>()
+    } else {
+        sized().collect()
+    };
+    pick.into_iter()
+        .map(|d| {
+            d.total_bytes.saturating_sub(d.available_bytes) as f64 * 100.0 / d.total_bytes as f64
+        })
+        .reduce(f64::max)
+}
+
+/// Averages `rows` (oldest first) into buckets of `bucket_secs` from `since`.
+fn bucket(rows: Vec<SeriesRow>, since: i64, bucket_secs: i64) -> Vec<SeriesPoint> {
+    let mut points = Vec::new();
+    let mut current: Option<(i64, Bucket)> = None;
+    for row in rows {
+        let at = since + (row.at - since).max(0) / bucket_secs * bucket_secs;
+        if current.as_ref().is_some_and(|(start, _)| *start != at) {
+            points.extend(current.take().map(finish));
+        }
+        let (_, b) = current.get_or_insert_with(|| (at, Bucket::default()));
+        b.samples += 1;
+        let cpu = row.cpu_global_usage_percent;
+        b.cpu.add(cpu.map(f64::from));
+        if let Some(cpu) = cpu.filter(|c| c.is_finite()) {
+            b.cpu_max = Some(b.cpu_max.map_or(cpu, |m| m.max(cpu)));
+        }
+        b.memory
+            .add(percent(row.memory_used_bytes, row.memory_total_bytes));
+        b.swap.add(percent(
+            row.memory_swap_used_bytes,
+            row.memory_swap_total_bytes,
+        ));
+        b.disk.add(fullest_disk_percent(&row.disks));
+        b.load_one.add(row.linux_load_avg_one);
+        b.load_five.add(row.linux_load_avg_five);
+        b.load_fifteen.add(row.linux_load_avg_fifteen);
+        b.net_rx.add(row.network_rx_bytes_per_sec);
+        b.net_tx.add(row.network_tx_bytes_per_sec);
+    }
+    points.extend(current.map(finish));
+    points
+}
+
+fn finish((at, b): (i64, Bucket)) -> SeriesPoint {
+    let f32_of = |m: &Mean| m.get().map(|v| v as f32);
+    SeriesPoint {
+        at,
+        samples: b.samples,
+        cpu_percent: f32_of(&b.cpu),
+        cpu_max_percent: b.cpu_max,
+        memory_percent: f32_of(&b.memory),
+        swap_percent: f32_of(&b.swap),
+        disk_percent: f32_of(&b.disk),
+        load_one: b.load_one.get(),
+        load_five: b.load_five.get(),
+        load_fifteen: b.load_fifteen.get(),
+        net_rx_bytes_per_sec: b.net_rx.get(),
+        net_tx_bytes_per_sec: b.net_tx.get(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(at: i64, cpu: f32) -> SeriesRow {
+        SeriesRow {
+            at,
+            cpu_global_usage_percent: Some(cpu),
+            memory_total_bytes: Some(1000),
+            memory_used_bytes: Some(250),
+            memory_swap_total_bytes: Some(0),
+            memory_swap_used_bytes: Some(0),
+            disks: r#"[{"name":"sda1","mount_point":"/","file_system":"ext4","total_bytes":100,"available_bytes":40,"removable":false},
+                       {"name":"sdb1","mount_point":"/media/usb","file_system":"vfat","total_bytes":100,"available_bytes":1,"removable":true}]"#
+                .to_string(),
+            linux_load_avg_one: Some(1.0),
+            linux_load_avg_five: None,
+            linux_load_avg_fifteen: None,
+            network_rx_bytes_per_sec: Some(100.0),
+            network_tx_bytes_per_sec: None,
+        }
+    }
+
+    #[test]
+    fn averages_into_buckets_and_skips_empty_ones() {
+        // Buckets of 60 s from t=1000: [1000, 1060), [1060, 1120), ...
+        let points = bucket(
+            vec![row(1000, 10.0), row(1030, 30.0), row(1200, 50.0)],
+            1000,
+            60,
+        );
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].at, 1000);
+        assert_eq!(points[0].samples, 2);
+        assert_eq!(points[0].cpu_percent, Some(20.0));
+        assert_eq!(points[0].cpu_max_percent, Some(30.0));
+        assert_eq!(points[0].memory_percent, Some(25.0));
+        // Swap total 0: no swap, not 0 %.
+        assert_eq!(points[0].swap_percent, None);
+        // The USB stick is fuller, but removable.
+        assert_eq!(points[0].disk_percent, Some(60.0));
+        assert_eq!(points[0].load_one, Some(1.0));
+        assert_eq!(points[0].load_five, None);
+        assert_eq!(points[0].net_rx_bytes_per_sec, Some(100.0));
+        // Nothing between 1060 and 1180.
+        assert_eq!(points[1].at, 1180);
+        assert_eq!(points[1].samples, 1);
+    }
+
+    #[tokio::test]
+    async fn series_and_paging_from_the_database() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let agent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agents (hostname, public_ip, os_name, os_version, kernel_version, arch,
+                                 fingerprint, status)
+             VALUES ('web01', '192.0.2.1', 'linux', '1', '6', 'x86_64', 'fp', 'approved')
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Two hours ago (outside a 1 h range), then 30 and 29 minutes ago.
+        for (mins_ago, cpu) in [(120, 90.0), (30, 10.0), (29, 20.0)] {
+            sqlx::query(
+                "INSERT INTO metrics (agent_id, created_at, cpu_global_usage_percent)
+                 VALUES (?, datetime('now', ?), ?)",
+            )
+            .bind(agent_id)
+            .bind(format!("-{mins_ago} minutes"))
+            .bind(cpu)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let Json(s) = series(
+            State(pool.clone()),
+            Path(agent_id),
+            Query(SeriesQuery {
+                range_secs: Some(3600),
+                points: Some(6),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.until - s.since, 3600);
+        assert_eq!(s.bucket_secs, 600);
+        let samples: u32 = s.points.iter().map(|p| p.samples).sum();
+        assert_eq!(samples, 2);
+        let cpu: Vec<f32> = s.points.iter().filter_map(|p| p.cpu_max_percent).collect();
+        assert!(cpu.iter().all(|c| *c < 90.0), "{cpu:?}");
+        assert!(s.points.iter().all(|p| p.memory_percent.is_none()));
+
+        let page = |before_id: Option<i64>| {
+            let pool = pool.clone();
+            async move {
+                list(
+                    State(pool),
+                    Path(agent_id),
+                    Query(ListQuery {
+                        limit: Some(2),
+                        before_id,
+                    }),
+                )
+                .await
+                .unwrap()
+                .0
+            }
+        };
+        let first = page(None).await;
+        assert_eq!(first.len(), 2);
+        let older = page(Some(first[1].id)).await;
+        assert_eq!(older.len(), 1);
+        assert!(older[0].id < first[1].id);
+    }
+
+    #[test]
+    fn disk_percent_falls_back_to_removable_disks() {
+        let only_usb = r#"[{"name":"sdb1","mount_point":"/media/usb","file_system":"vfat","total_bytes":200,"available_bytes":50,"removable":true}]"#;
+        assert_eq!(fullest_disk_percent(only_usb), Some(75.0));
+        assert_eq!(fullest_disk_percent("[]"), None);
+        assert_eq!(fullest_disk_percent("not json"), None);
+    }
 }
