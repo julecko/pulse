@@ -14,12 +14,20 @@ use serde::{Deserialize, Serialize};
 /// Release default data dir; matches `StateDirectory=pulse-server` in the systemd unit.
 pub const DEFAULT_DATA_DIR: &str = "/var/lib/pulse-server";
 
+/// sqlx's own default pool size, used when `[db] max_connections` is unset.
+pub const DEFAULT_MAX_CONNECTIONS: u32 = 10;
+
 /// The server config's `[db]` section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DbConfig {
     /// Explicit database file. Unset: `<data dir>/server.db`.
     pub path: Option<PathBuf>,
+    /// Max SQLite connections in the pool. Unset: `DEFAULT_MAX_CONNECTIONS`.
+    /// Raise it on a busy server with many agents/users hitting the API at
+    /// once; lower it on a small box to trim idle per-connection page-cache
+    /// memory (~2 MiB each by default).
+    pub max_connections: Option<u32>,
 }
 
 impl DbConfig {
@@ -27,6 +35,10 @@ impl DbConfig {
         self.path
             .clone()
             .unwrap_or_else(|| data_dir().join("server.db"))
+    }
+
+    pub fn resolved_max_connections(&self) -> u32 {
+        self.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS)
     }
 }
 

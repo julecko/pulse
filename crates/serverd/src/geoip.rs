@@ -14,7 +14,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
-use maxminddb::{Reader, geoip2};
+use maxminddb::{Mmap, Reader, geoip2};
 use serde::{Deserialize, Serialize};
 
 /// Release default database file; where `geoipupdate` puts it.
@@ -51,13 +51,17 @@ pub struct Location {
 
 /// The loaded database, if any.
 pub struct GeoIp {
-    reader: Option<(PathBuf, Reader<Vec<u8>>)>,
+    reader: Option<(PathBuf, Reader<Mmap>)>,
 }
 
 impl GeoIp {
     pub fn load(cfg: &GeoIpConfig) -> Self {
         let path = cfg.resolved_database();
-        match Reader::open_readfile(&path) {
+        // SAFETY: the file isn't modified or truncated while the server is
+        // running — `geoipupdate` writes a new file and the docs direct
+        // admins to restart the server after an update, so the mapping
+        // outlives any in-place edit.
+        match unsafe { Reader::open_mmap(&path) } {
             Ok(reader) => {
                 tracing::info!(
                     path = %path.display(),

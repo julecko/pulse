@@ -63,6 +63,10 @@ max_per_ip = 64
 [db]
 # Leave unset to use /var/lib/pulse-server/server.db.
 # path = "/var/lib/pulse-server/server.db"
+# SQLite connection pool size. Default: 10. Raise it if many users/agents
+# hit the API at once and you see pool-wait latency; lower it on a small
+# box to trim idle per-connection page-cache memory (~2 MiB each).
+# max_connections = 10
 
 [retention]
 # Days of rows to keep; older rows are deleted hourly. 0 keeps rows forever.

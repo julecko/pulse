@@ -10,6 +10,11 @@ Group=pulse-server
 ExecStart=/usr/lib/pulse-server/pulse-serverd
 Restart=on-failure
 RestartSec=5
+# Argon2 password checks run on blocking-pool threads; glibc gives each OS
+# thread its own malloc arena, and freed argon2 buffers (~19 MiB each) can
+# sit uncollected in a thread's arena instead of being reused or returned
+# to the OS. Capping arenas keeps memory bounded as login traffic scales up.
+Environment=MALLOC_ARENA_MAX=2
 # One file descriptor per connection: room for [web.connections] max
 # (default 4096) plus the database and logs. The default soft limit is 1024.
 LimitNOFILE=8192

@@ -36,6 +36,7 @@ pub async fn connect(cfg: &DbConfig) -> Result<SqlitePool, DbError> {
         .create_if_missing(true);
 
     let pool = SqlitePoolOptions::new()
+        .max_connections(cfg.resolved_max_connections())
         .connect_with(options)
         .await
         .map_err(|e| DbError::Open(path.clone(), e))?;
