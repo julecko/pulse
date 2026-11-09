@@ -49,6 +49,14 @@ auth_events_per_agent_per_minute = 300
 # Pushes per agent: `pulse-agent-cli notify` + PAM events (`agents pam-notify`).
 notifications_per_agent_per_minute = 10
 
+[web.auth_events]
+# A login from the same remote host (sshd) or requesting user (sudo, su --
+# these have no remote host), to the same agent and service, within this
+# many seconds of the previous one is stored but not pushed, so
+# reconnecting over SSH or running sudo repeatedly doesn't notify every
+# time. 0 disables this: every login/sudo is pushed.
+repeat_login_window_secs = 300
+
 [web.connections]
 # Caps on open connections; a client over a cap is disconnected right away.
 # 0 disables a cap. Behind a reverse proxy every client shares the proxy's

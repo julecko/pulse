@@ -1,9 +1,10 @@
 //! PAM auth events (sessions, failed auth) forwarded by agents, and pushed
 //! to every registered device for the kinds the agent's PAM push settings
 //! pick (see [`super::pam_notifications`]). SSH logins are also checked for
-//! geo alerts (see [`crate::geo_alerts`]). A login from the same remote
-//! host within [`REPEAT_LOGIN_WINDOW_SECS`] of the previous one is stored
-//! but not pushed.
+//! geo alerts (see [`crate::geo_alerts`]). A login from the same "who" (the
+//! remote host for sshd, or the requesting user for sudo/su, which has no
+//! remote host) within [`AuthEventsConfig::repeat_login_window_secs`] of the
+//! previous one is stored but not pushed.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use protocol::{AuthEvent, AuthEventKind, AuthEventRecord};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use super::auth::AuthedAgent;
@@ -51,12 +52,38 @@ fn truncate(s: &str) -> Cow<'_, str> {
 /// escaped (see [`protocol::escape_for_display`]).
 const MAX_PUSH_FIELD_CHARS: usize = 64;
 
-/// A login (session open) from the same remote host, to the same agent and
-/// service, within this many seconds of the previous one isn't pushed, so
-/// reconnecting over SSH doesn't send a push every time. Measured from the
-/// last login, so a steady stream of reconnects stays quiet until there's a
-/// gap this long.
-const REPEAT_LOGIN_WINDOW_SECS: i64 = 5 * 60;
+/// `[web.auth_events]` in `server.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthEventsConfig {
+    /// A login (session open) from the same "who" (see [`dedup_key`]), to
+    /// the same agent and service, within this many seconds of the
+    /// previous one isn't pushed, so reconnecting over SSH, or running
+    /// `sudo` repeatedly, doesn't send a push every time. Measured from the
+    /// last login, so a steady stream of them stays quiet until there's a
+    /// gap this long. 0 turns the dedup off: every one of them is pushed.
+    pub repeat_login_window_secs: u32,
+}
+
+impl Default for AuthEventsConfig {
+    fn default() -> Self {
+        Self {
+            repeat_login_window_secs: 5 * 60,
+        }
+    }
+}
+
+/// What identifies "the same one logging in again", for dedup: the remote
+/// host when there is one (sshd), otherwise the requesting user (sudo, su —
+/// these have no `rhost`). `None` when neither is set, so the login is
+/// never treated as a repeat.
+fn dedup_key(event: &AuthEvent) -> Option<&str> {
+    event
+        .rhost
+        .as_deref()
+        .filter(|h| !h.is_empty())
+        .or_else(|| event.ruser.as_deref().filter(|r| !r.is_empty()))
+}
 
 /// Stores one event for the calling agent, then pushes it if the agent's
 /// settings ask for that kind (see [`push_event`]). Behind
@@ -71,7 +98,13 @@ pub async fn ingest(
     let located = alerting.geo().locate(event.rhost.as_deref());
     let location = located.as_ref().map(|(_, location)| location);
     // Checked before storing, so the event doesn't find itself.
-    let repeat = is_repeat_login(&pool, agent.id, &event).await;
+    let repeat = is_repeat_login(
+        &pool,
+        agent.id,
+        &event,
+        i64::from(alerting.repeat_login_window_secs()),
+    )
+    .await;
 
     sqlx::query(
         "INSERT INTO auth_events (agent_id, kind, service, user, ruser, rhost, tty, occurred_at,
@@ -130,21 +163,29 @@ pub async fn ingest(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Whether `event` is a login from a remote host that already logged in to
-/// this agent's `service` within [`REPEAT_LOGIN_WINDOW_SECS`] before it (see
-/// [`ingest`]). Only session opens with a remote host count. A failed lookup
-/// counts as not a repeat, so the push still goes out.
-async fn is_repeat_login(pool: &SqlitePool, agent_id: i64, event: &AuthEvent) -> bool {
-    if event.kind != AuthEventKind::SessionOpen {
+/// Whether `event` is a login from the same "who" (see [`dedup_key`]) that
+/// already logged in to this agent's `service` within `window_secs` before
+/// it (see [`ingest`], [`AuthEventsConfig::repeat_login_window_secs`]).
+/// Only session opens with a dedup key count, and `window_secs <= 0` never
+/// counts as a repeat. A failed lookup counts as not a repeat, so the push
+/// still goes out.
+async fn is_repeat_login(
+    pool: &SqlitePool,
+    agent_id: i64,
+    event: &AuthEvent,
+    window_secs: i64,
+) -> bool {
+    if event.kind != AuthEventKind::SessionOpen || window_secs <= 0 {
         return false;
     }
-    let Some(rhost) = event.rhost.as_deref().filter(|h| !h.is_empty()) else {
+    let Some(key) = dedup_key(event) else {
         return false;
     };
     let result: Result<bool, _> = sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1 FROM auth_events
-             WHERE agent_id = ? AND kind = ? AND service = ? AND rhost = ?
+             WHERE agent_id = ? AND kind = ? AND service = ?
+               AND COALESCE(NULLIF(rhost, ''), NULLIF(ruser, '')) = ?
                AND occurred_at >= datetime(?, 'unixepoch')
                AND occurred_at <= datetime(?, 'unixepoch')
          )",
@@ -152,8 +193,8 @@ async fn is_repeat_login(pool: &SqlitePool, agent_id: i64, event: &AuthEvent) ->
     .bind(agent_id)
     .bind(AuthEventKind::SessionOpen.as_str())
     .bind(truncate(&event.service))
-    .bind(truncate(rhost))
-    .bind(event.occurred_at - REPEAT_LOGIN_WINDOW_SECS)
+    .bind(truncate(key))
+    .bind(event.occurred_at - window_secs)
     .bind(event.occurred_at)
     .fetch_one(pool)
     .await;
@@ -466,28 +507,89 @@ mod tests {
         };
 
         let t = 1_700_000_000;
-        assert!(!is_repeat_login(&pool, agent_id, &login_at(t, "192.0.2.7")).await);
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t, "192.0.2.7"), 300).await);
         store(login_at(t, "192.0.2.7")).await;
 
         // Relogin within 5 minutes: quiet. Another host: pushed.
-        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.7")).await);
-        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.8")).await);
+        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.7"), 300).await);
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 120, "192.0.2.8"), 300).await);
         // The window runs from the last login, so it slides with each one.
         store(login_at(t + 240, "192.0.2.7")).await;
-        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 500, "192.0.2.7")).await);
+        assert!(is_repeat_login(&pool, agent_id, &login_at(t + 500, "192.0.2.7"), 300).await);
         // More than 5 minutes after the last login: pushed again.
-        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 600, "192.0.2.7")).await);
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 600, "192.0.2.7"), 300).await);
 
         // Only logins are deduplicated, and other kinds don't count as one.
         let mut failed = login_at(t + 120, "192.0.2.7");
         failed.kind = AuthEventKind::AuthFailure;
-        assert!(!is_repeat_login(&pool, agent_id, &failed).await);
+        assert!(!is_repeat_login(&pool, agent_id, &failed, 300).await);
         store(AuthEvent {
             occurred_at: t + 1000,
             ..failed
         })
         .await;
-        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 1100, "192.0.2.7")).await);
+        assert!(!is_repeat_login(&pool, agent_id, &login_at(t + 1100, "192.0.2.7"), 300).await);
+    }
+
+    #[tokio::test]
+    async fn repeat_login_within_window_from_same_sudo_user() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let agent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agents (hostname, public_ip, os_name, os_version, kernel_version, arch,
+                                 fingerprint, status)
+             VALUES ('web01', '192.0.2.1', 'linux', '1', '6', 'x86_64', 'fp', 'approved')
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let store = |event: AuthEvent| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO auth_events (agent_id, kind, service, user, ruser, occurred_at)
+                     VALUES (?, ?, ?, ?, ?, datetime(?, 'unixepoch'))",
+                )
+                .bind(agent_id)
+                .bind(event.kind.as_str())
+                .bind(&event.service)
+                .bind(&event.user)
+                .bind(&event.ruser)
+                .bind(event.occurred_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        // sudo has no rhost; who did it is `ruser`, the invoking user.
+        let sudo_at = |at: i64, ruser: &str| AuthEvent {
+            ruser: Some(ruser.to_string()),
+            rhost: None,
+            occurred_at: at,
+            ..event(AuthEventKind::SessionOpen, "sudo", "root", None)
+        };
+
+        let t = 1_700_000_000;
+        assert!(!is_repeat_login(&pool, agent_id, &sudo_at(t, "alice"), 300).await);
+        store(sudo_at(t, "alice")).await;
+
+        // Same user running sudo again within 5 minutes: quiet. A
+        // different user: pushed.
+        assert!(is_repeat_login(&pool, agent_id, &sudo_at(t + 120, "alice"), 300).await);
+        assert!(!is_repeat_login(&pool, agent_id, &sudo_at(t + 120, "bob"), 300).await);
+        // More than 5 minutes after alice's last sudo: pushed again.
+        assert!(!is_repeat_login(&pool, agent_id, &sudo_at(t + 600, "alice"), 300).await);
+
+        // A window of 0 (`repeat_login_window_secs = 0` in server.toml)
+        // turns the dedup off: even an instant repeat is pushed.
+        store(sudo_at(t + 600, "alice")).await;
+        assert!(!is_repeat_login(&pool, agent_id, &sudo_at(t + 601, "alice"), 0).await);
     }
 
     #[tokio::test]

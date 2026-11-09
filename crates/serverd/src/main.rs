@@ -56,7 +56,11 @@ async fn main() {
         std::process::exit(1);
     });
     let geoip = geoip::GeoIp::load(&cfg.geoip);
-    let alerting = alerting::Alerting::new(push, geo_alerts::GeoAlerts::new(geoip));
+    let alerting = alerting::Alerting::new(
+        push,
+        geo_alerts::GeoAlerts::new(geoip),
+        cfg.web.auth_events.repeat_login_window_secs,
+    );
     tokio::spawn(offline::watch(pool.clone(), alerting.clone()));
 
     let app_releases = app_releases::AppReleases::open(&cfg.app_releases).unwrap_or_else(|err| {

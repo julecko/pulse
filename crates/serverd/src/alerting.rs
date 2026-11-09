@@ -33,6 +33,8 @@ pub struct Alerting {
     geo: GeoAlerts,
     /// (rule, agent) -> when its condition started holding.
     holding_since: Mutex<HashMap<(i64, i64), Instant>>,
+    /// See [`crate::web::auth_events::AuthEventsConfig::repeat_login_window_secs`].
+    repeat_login_window_secs: u32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -48,11 +50,12 @@ struct RuleRow {
 }
 
 impl Alerting {
-    pub fn new(push: Push, geo: GeoAlerts) -> Arc<Self> {
+    pub fn new(push: Push, geo: GeoAlerts, repeat_login_window_secs: u32) -> Arc<Self> {
         Arc::new(Self {
             push,
             geo,
             holding_since: Mutex::new(HashMap::new()),
+            repeat_login_window_secs,
         })
     }
 
@@ -63,6 +66,11 @@ impl Alerting {
     /// Also used for plain notifications (see `web::notify`).
     pub fn push(&self) -> &Push {
         &self.push
+    }
+
+    /// See [`crate::web::auth_events::AuthEventsConfig::repeat_login_window_secs`].
+    pub fn repeat_login_window_secs(&self) -> u32 {
+        self.repeat_login_window_secs
     }
 
     /// Checks `agent_id`'s rules against the snapshot it just sent. Errors
