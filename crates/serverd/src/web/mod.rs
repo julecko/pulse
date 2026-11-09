@@ -3,7 +3,7 @@ mod alert_rules;
 mod alerts;
 mod app_releases;
 mod auth;
-mod auth_events;
+pub(crate) mod auth_events;
 mod conn_limit;
 mod geo_alerts;
 mod metrics;
@@ -40,6 +40,7 @@ pub struct WebConfig {
     pub session_ttl_hours: u32,
     pub rate_limit: rate_limit::RateLimitConfig,
     pub connections: conn_limit::ConnectionLimits,
+    pub auth_events: auth_events::AuthEventsConfig,
 }
 
 /// Longest a client may take to send a request's headers (including the
@@ -61,6 +62,7 @@ impl Default for WebConfig {
             session_ttl_hours: 24 * 7,
             rate_limit: rate_limit::RateLimitConfig::default(),
             connections: conn_limit::ConnectionLimits::default(),
+            auth_events: auth_events::AuthEventsConfig::default(),
         }
     }
 }

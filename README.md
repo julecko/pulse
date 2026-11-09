@@ -520,6 +520,14 @@ attacker typed; they're escaped and cut to 64 characters in the push.
 HTTP routes, for logged-in users: `GET /agents/pam-notifications`,
 `GET/PUT /agents/{id}/pam-notifications` (`{"kinds": ["session_open"]}`).
 
+A login from the same remote host (sshd) or the same requesting user
+(sudo/su, which have no remote host), to the same agent and service, is
+only pushed once every `repeat_login_window_secs` (default 300, i.e. 5
+minutes; `[web.auth_events]` in `server.toml`) — so reconnecting over SSH,
+or running `sudo` a dozen times in a row, doesn't send a push each time.
+It's still recorded every time; only the push is skipped. Set it to `0` to
+push every one of them, or raise it if 5 minutes is still too chatty.
+
 Keep a root shell open while editing PAM files, so a mistake can't lock you
 out. The hook always exits 0 and the lines are `optional`, so a stopped or
 broken agent never blocks a login.
